@@ -6,6 +6,11 @@ ESP32 para Arduino, versión 2.0.17. Sus algoritmos de detección, reconocimient
 registro y su interfaz web se conservan. La detección queda activada al arrancar;
 el reconocimiento y el registro se controlan desde la página.
 
+La ampliación **`http://IP/rostros`** permite registrar con nombre y foto,
+consultar la galería y eliminar registros. Su código está en **`custompage/`**;
+ver [custompage/README.md](custompage/README.md) para cargar y probar esta versión.
+La página original sigue en `/` y contiene un enlace a la nueva página.
+
 ## Abrir y compilar
 
 Para descargar este repositorio, conservar el nombre de carpeta que espera Arduino:
@@ -81,8 +86,10 @@ En Herramientas seleccionar:
 - USB Mode: Hardware CDC and JTAG.
 - Upload Mode: UART0 / Hardware CDC.
 
-El archivo `partitions.csv` es el incluido en el ejemplo oficial y reserva la
-partición `fr` utilizada por su reconocedor para guardar identificadores.
+El archivo `partitions.csv` conserva la partición `fr` del ejemplo oficial,
+utilizada por su reconocedor para guardar identificadores. La ampliación añade
+`faces` (1 MB desde 0x400000) para nombres y fotos con LittleFS, sin mover `fr`
+ni la aplicación. Esta tabla requiere la placa de 16 MB configurada arriba.
 
 Los pines de cámara coinciden con el perfil `CAMERA_MODEL_ESP32S3_EYE` del ejemplo:
 XCLK 15, SCCB SDA 4/SCL 5, VSYNC 6, HREF 7, PCLK 13, D0..D7 = 11,9,8,10,12,18,17,16.
@@ -99,7 +106,7 @@ Esto utiliza el perfil de pines; la placa adquirida es una ESP32-S3-CAM N16R8.
    arranque, pulsar y soltar **EN/RST**, dejando BOOT sin pulsar.
 3. Comprobar PSRAM, sensor y la dirección mostrada por `Camera Ready!`.
 4. Conectar la PC a la misma red y abrir esa dirección por HTTP.
-5. Pulsar Start Stream. En modo RGB565 el ejemplo arranca a 240x240. La detección
+5. Pulsar Start Stream. En modo RGB565 el proyecto arranca a 240x240. La detección
    debe dibujar recuadros sobre los rostros. Mantener una resolución de ancho
    inferior o igual a 400 píxeles: el ejemplo omite la detección por encima.
 6. Para probar reconocimiento, activar Face Recognition y usar Enroll Face con

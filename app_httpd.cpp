@@ -18,7 +18,7 @@
 #include "fb_gfx.h"
 #include "esp32-hal-ledc.h"
 #include "sdkconfig.h"
-#include "camera_index.h"
+#include "custompage/stock_index_assets.h"
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_ARDUHAL_ESP_LOG)
 #include "esp32-hal-log.h"
@@ -132,6 +132,10 @@ typedef struct
 } ra_filter_t;
 
 static ra_filter_t ra_filter;
+
+#if CONFIG_ESP_FACE_RECOGNITION_ENABLED
+#include "custompage/rostros_backend.h"
+#endif
 
 static ra_filter_t *ra_filter_init(ra_filter_t *filter, size_t sample_size)
 {
@@ -253,26 +257,28 @@ static void draw_face_boxes(fb_data_t *fb, std::list<dl::detect::result_t> *resu
 #if CONFIG_ESP_FACE_RECOGNITION_ENABLED
 static int run_face_recognition(fb_data_t *fb, std::list<dl::detect::result_t> *results)
 {
+    custompage::Lock lock;
+    if (!lock) return -1;
     std::vector<int> landmarks = results->front().keypoint;
-    int id = -1;
-
     Tensor<uint8_t> tensor;
     tensor.set_element((uint8_t *)fb->data).set_shape({fb->height, fb->width, 3}).set_auto_free(false);
 
-    int enrolled_count = recognizer.get_enrolled_id_num();
-
-    if (enrolled_count < FACE_ID_SAVE_NUMBER && is_enrolling){
-        id = recognizer.enroll_id(tensor, landmarks, "", true);
-        log_i("Enrolled ID: %d", id);
-        rgb_printf(fb, FACE_COLOR_CYAN, "ID[%u]", id);
-    }
+    custompage::enroll(fb, results, tensor);
 
     face_info_t recognize = recognizer.recognize(tensor, landmarks);
     if(recognize.id >= 0){
-        rgb_printf(fb, FACE_COLOR_GREEN, "ID[%u]: %.2f", recognize.id, recognize.similarity);
+        String name = custompage::displayName(recognize.id);
+        custompage::lastName = name;
+        // fb_gfx has an ASCII font; the web UI preserves the full UTF-8 name.
+        bool ascii = name.length() <= 16;
+        for (size_t i = 0; i < name.length(); ++i) if ((uint8_t)name[i] >= 128) ascii = false;
+        if (ascii) rgb_print(fb, FACE_COLOR_GREEN, name.c_str());
+        else rgb_printf(fb, FACE_COLOR_GREEN, "ID[%u]: %.2f", recognize.id, recognize.similarity);
     } else {
+        custompage::lastName = "Intruso: rostro no reconocido";
         rgb_print(fb, FACE_COLOR_RED, "Intruder Alert!");
     }
+    custompage::lastSeen = esp_timer_get_time();
     return recognize.id;
 }
 #endif
@@ -908,8 +914,10 @@ static esp_err_t cmd_handler(httpd_req_t *req)
     }
 #if CONFIG_ESP_FACE_RECOGNITION_ENABLED
     else if (!strcmp(variable, "face_enroll")){
-        is_enrolling = !is_enrolling;
-        log_i("Enrolling: %s", is_enrolling?"true":"false");
+        custompage::Lock lock;
+        if (!lock) return httpd_resp_send_500(req);
+        if (is_enrolling) custompage::cancel();
+        else if (!custompage::arm("Persona")) return httpd_resp_send_500(req);
     }
     else if (!strcmp(variable, "face_recognize")) {
         recognition_enabled = val;
@@ -1205,7 +1213,8 @@ static esp_err_t index_handler(httpd_req_t *req)
 void startCameraServer()
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 16;
+    config.max_uri_handlers = 24;
+    config.stack_size = 8192;
 
     httpd_uri_t index_uri = {
         .uri = "/",
@@ -1357,6 +1366,7 @@ void startCameraServer()
 
     // load ids from flash partition
     recognizer.set_ids_from_flash();
+    custompage::begin();
 #endif
     log_i("Starting web server on port: '%d'", config.server_port);
     if (httpd_start(&camera_httpd, &config) == ESP_OK)
@@ -1372,6 +1382,9 @@ void startCameraServer()
         httpd_register_uri_handler(camera_httpd, &greg_uri);
         httpd_register_uri_handler(camera_httpd, &pll_uri);
         httpd_register_uri_handler(camera_httpd, &win_uri);
+#if CONFIG_ESP_FACE_RECOGNITION_ENABLED
+        custompage::routes(camera_httpd);
+#endif
     }
 
     config.server_port += 1;
