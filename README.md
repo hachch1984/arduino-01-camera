@@ -11,6 +11,13 @@ consultar la galería y eliminar registros. Su código está en **`custompage/`*
 ver [custompage/README.md](custompage/README.md) para cargar y probar esta versión.
 La página original sigue en `/` y contiene un enlace a la nueva página.
 
+**Modo actual:** la interfaz personalizada se sirve desde Node.js en la PC:
+ejecutar `npm ci` y `npm start`, y abrir **http://localhost:3000/rostros**.
+La cámara conserva la API y el reconocimiento; el servidor prepara los reportes
+por Brevo. Configuración privada en `secret.env` (excluido de Git). Ver
+[instrucciones del servidor](custompage/server/README.md) y la limitación TLS
+detectada en esta PC antes de probar el envío real.
+
 ## Abrir y compilar
 
 Para descargar este repositorio, conservar el nombre de carpeta que espera Arduino:

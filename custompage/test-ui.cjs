@@ -8,12 +8,14 @@ const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQ
 const run = async () => {
   const browser = await chromium.launch({headless:true, executablePath:process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe'});
   try {
-    const page = await browser.newPage({viewport:{width:1280,height:960}});
+    const page = await browser.newPage({viewport:{width:1280,height:960},timezoneId:'Asia/Tokyo'});
+    await page.addInitScript(()=>{window.CAMERA_APP={reports:true,token:'test-token',cameraUrl:'http://camera.test'};});
     const errors = []; page.on('pageerror', error => errors.push(error.message));
-    let offline = false, rejectPost = false, deletes = 0, registeredName = '';
-    const state = {storage:true,pending:false,failed:false,revision:0,limit:7,message:'Listo.',lastName:'',people:[{id:0,name:'Registro anterior',photo:false}]};
+    let offline = false, rejectPost = false, deletes = 0, registeredName = '', sentReport = null;
+    const state = {storage:true,pending:false,failed:false,revision:0,limit:7,message:'Listo.',lastName:'',faceVisible:false,lastId:-1,eventSequence:0,people:[{id:0,name:'Registro anterior',photo:false}]};
     await page.route('http://camera.test*/**', async route => {
       const request = route.request(), url = new URL(request.url());
+      if(url.pathname==='/api/report') {sentReport=request.postDataJSON();return route.fulfill({json:{ok:true,message:'Brevo acepto el reporte para envio.',accepted:['one@example.com','two@example.com'],rejected:[]}});}
       if (url.pathname === '/stream' || url.pathname === '/api/rostros/foto') return route.fulfill({contentType:'image/png',body:image});
       if (url.pathname.startsWith('/api/rostros')) {
         if (offline) return route.abort();
@@ -53,6 +55,41 @@ const run = async () => {
     assert.equal(await page.locator('#capacityBar').textContent(),'29 %');
     assert.equal(await page.locator('#people img').count(),1);
     assert.ok((await page.locator('#people').innerText()).includes(registeredName));
+    // The recognition panel uses the enrolled portrait, not an event capture.
+    state.faceVisible=true;state.lastId=1;
+    await page.waitForFunction(()=>!document.querySelector('#recognizedDetails').hidden);
+    assert.equal(await page.locator('#recognizedName').textContent(),registeredName);
+    assert.match(await page.locator('#recognizedPhoto').getAttribute('src'),/id=1/);
+    await page.locator('#recordEvents').check();
+    state.eventSequence=1;state.event={sequence:1,ageMs:1000,name:registeredName,image:image.toString('base64')};
+    await page.waitForFunction(()=>document.querySelector('#events').children.length===1);
+    assert.equal(await page.locator('#events img').count(),1);
+    assert.equal(await page.locator('#sendReport').isDisabled(),false);
+    await page.locator('#reportEmails').fill('one@example.com, two@example.com');
+    await page.locator('#sendReport').click();
+    await page.getByRole('heading',{name:'Reporte aceptado por Brevo',exact:true}).waitFor();
+    assert.equal(sentReport.events.length,1);assert.equal(sentReport.events[0].name,registeredName);assert.equal(sentReport.recipients,'one@example.com, two@example.com');
+    assert.equal(sentReport.events[0].image,image.toString('base64'));
+    await page.locator('.swal2-confirm').click();await page.locator('.swal2-popup').waitFor({state:'hidden'});
+    assert.ok((await page.locator('#events').innerText()).includes(registeredName));
+    assert.equal(await page.locator('#events time').evaluate(el=>el.textContent===new Intl.DateTimeFormat('es-PE',{timeZone:'America/Lima',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true}).format(new Date(el.dateTime))),true);
+    await page.waitForTimeout(2000);assert.equal(await page.locator('#events article').count(),1);
+    await page.locator('#recordEvents').uncheck();
+    state.lastId=-1;state.eventSequence=2;state.event={...state.event,sequence:2,name:'Intruso'};
+    await page.waitForFunction(()=>document.querySelector('#recognizedName').textContent==='Intruso');
+    assert.equal(await page.locator('#recognizedDetails').isHidden(),true);
+    assert.equal(await page.locator('#events article').count(),1);
+    await page.locator('#recordEvents').check();
+    state.eventSequence=3;state.event={...state.event,sequence:3};
+    await page.waitForFunction(()=>document.querySelector('#events').children.length===2);
+    assert.match(await page.locator('#events article').first().innerText(),/Intruso/);
+    await page.locator('#clearEvents').click();
+    await page.waitForTimeout(2000);assert.equal(await page.locator('#events article').count(),0);
+    assert.equal(await page.locator('#clearEvents').isDisabled(),true);
+    await page.locator('#recordEvents').uncheck();state.faceVisible=false;
+    await page.waitForFunction(()=>document.querySelector('#recognizedName').textContent==='Sin reconocimiento');
+    assert.equal(await page.locator('#sendReport').isDisabled(),true);
+    assert.equal(await page.getByText('Emoción detectada',{exact:true}).count(),0);
     await page.locator('#people button').last().click();
     await page.locator('.swal2-popup').waitFor({state:'visible'});
     assert.ok((await page.locator('.swal2-html-container').innerText()).includes(registeredName));
@@ -64,6 +101,7 @@ const run = async () => {
     await page.getByRole('heading',{name:'Registro eliminado',exact:true}).waitFor();
     await page.locator('.swal2-confirm').click();
     await page.waitForFunction(()=>document.querySelector('#count').textContent==='1 / 7'); assert.equal(deletes,1);
+    await page.locator('.swal2-popup').waitFor({state:'hidden'});
     const screenshotDir=process.env.UI_SCREENSHOT_DIR;
     if (screenshotDir) {fs.mkdirSync(screenshotDir,{recursive:true});await page.screenshot({path:path.join(screenshotDir,'desktop.png'),fullPage:true});}
     await page.setViewportSize({width:390,height:844});
@@ -83,7 +121,7 @@ const run = async () => {
     await page.waitForFunction(()=>document.querySelector('#feedback').textContent.includes('Sin conexión'));
     assert.equal(await page.locator('#enroll').isDisabled(),true);
     assert.deepEqual(errors,[]);
-    console.log('PASS: local assets, spinner during submission/pending, input clearing, SweetAlert cancel/delete/success, escaped names, capacity progress, errors, mobile layout. Simulated camera only.');
+    console.log('PASS: local assets, enrollment, SweetAlert, capacity, recognition portrait/intruder, events, Peru time, email snapshot/recipients/success, errors and mobile layout. Simulated camera only.');
   } finally {await browser.close();}
 };
 run().catch(error=>{console.error(error);process.exitCode=1;});

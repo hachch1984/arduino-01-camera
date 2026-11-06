@@ -1,0 +1,13 @@
+{
+  "name": "arduino-camera-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interfaz local y reportes SMTP de la camara ESP32-S3",
+  "scripts": {
+    "start": "node custompage/server/index.cjs",
+    "test": "node --test custompage/server/*.test.cjs",
+    "smtp:verify": "node custompage/server/verify-smtp.cjs"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": { "nodemailer": "10.3.1" }
+}

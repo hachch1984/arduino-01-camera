@@ -18,3 +18,9 @@ Thumbs.db
 Desktop.ini
 *.tmp
 *.bak
+
+# Credenciales locales y su configuracion generada para Arduino.
+secret.env
+custompage/mail_secrets.h
+node_modules/
+custompage/server/local/

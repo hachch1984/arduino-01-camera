@@ -266,6 +266,9 @@ static int run_face_recognition(fb_data_t *fb, std::list<dl::detect::result_t> *
     custompage::enroll(fb, results, tensor);
 
     face_info_t recognize = recognizer.recognize(tensor, landmarks);
+    custompage::lastId = recognize.id;
+    if (results->size() == 1) custompage::captureEvent(fb, results->front(), recognize.id);
+    else custompage::eventCandidate = -2;
     if(recognize.id >= 0){
         String name = custompage::displayName(recognize.id);
         custompage::lastName = name;
@@ -443,6 +446,9 @@ static esp_err_t capture_handler(httpd_req_t *req)
         HumanFaceDetectMSR01 s1(0.3F, 0.5F, 10, 0.2F);
         std::list<dl::detect::result_t> &results = s1.infer((uint16_t *)fb->buf, {(int)fb->height, (int)fb->width, 3});
 #endif
+        #if CONFIG_ESP_FACE_RECOGNITION_ENABLED
+        if (results.empty() || !recognition_enabled) custompage::resetEventWait();
+        #endif
         if (results.size() > 0) {
             fb_data_t rfb;
             rfb.width = fb->width;
@@ -494,6 +500,9 @@ static esp_err_t capture_handler(httpd_req_t *req)
         std::list<dl::detect::result_t> &results = s1.infer((uint8_t *)out_buf, {(int)out_height, (int)out_width, 3});
 #endif
 
+        #if CONFIG_ESP_FACE_RECOGNITION_ENABLED
+        if (results.empty() || !recognition_enabled) custompage::resetEventWait();
+        #endif
         if (results.size() > 0) {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
             detected = true;
@@ -703,6 +712,9 @@ static esp_err_t stream_handler(httpd_req_t *req)
                             fr_recognize = fr_face;
 #endif
 
+                            #if CONFIG_ESP_FACE_RECOGNITION_ENABLED
+                            if (results.empty() || !recognition_enabled) custompage::resetEventWait();
+                            #endif
                             if (results.size() > 0) {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
                                 detected = true;

@@ -1,5 +1,11 @@
 # Página de rostros
 
+**Actualización:** la interfaz ahora se aloja en Node.js para liberar flash del
+ESP32 y enviar reportes mediante Brevo. Abrir `http://localhost:3000/rostros`.
+Consultar [server/README.md](server/README.md) para arranque, `secret.env`, SMTP,
+pruebas y limitación TLS pendiente. Los apartados sobre interfaz embebida de este
+documento describen el modo anterior/opcional (`CUSTOMPAGE_EMBED_WEB_UI=1`).
+
 ## Memoria del avance — 2026-11-06
 
 Se añadió `/rostros` como página independiente de los ajustes originales `/`.
@@ -24,6 +30,41 @@ iniciar depuración: la carga ejecuta el firmware y el video se inicia en la web
 
 Ampliación del CameraWebServer de Espressif 2.0.17 para esta ESP32-S3-CAM N16R8.
 Se conserva el algoritmo de reconocimiento incluido en ese paquete.
+
+## Interfaz de padrón, reconocimiento y eventos
+
+- Arriba: cámara en vivo y panel de reconocimiento. El panel muestra el nombre
+  y la foto **empadronada** por ID; para un desconocido solo muestra **Intruso**.
+  Sin rostro reciente, con video detenido o sin conexión, se limpia ese panel.
+- Abajo: padrón con formulario, lista vertical y capacidad; eventos con checkbox,
+  botón Limpiar, lista de capturas y espacio para varios correos. Enviar reporte
+  usa el servidor Node.js y se habilita cuando existen eventos.
+- La sección de emociones se retiró por petición del usuario. El reconocedor
+  instalado no incluye clasificación de expresiones ni confianza de emociones.
+- Registrar eventos está desmarcado inicialmente. Con video iniciado, la página
+  renueva una solicitud de captura consultando `/api/rostros?record=1&after=N`.
+  El firmware recorta el mismo cuadro sin anotaciones usado por el reconocedor,
+  guarda temporalmente su JPEG en base64 junto al nombre o Intruso y lo devuelve
+  con un número de secuencia y su antigüedad en milisegundos. No se reutiliza la
+  foto del padrón como si fuera una captura nueva.
+- Antes de capturar se esperan tres segundos de detecciones con un solo rostro
+  y el mismo resultado de reconocimiento. La espera se reinicia si no hay rostro,
+  aparecen varios, cambia el ID o pasan más de 2.5 segundos sin observaciones.
+  No se usa delay: el video sigue procesándose. Si la persona permanece, se
+  genera otra captura después de otros tres segundos. Los desconocidos comparten
+  el resultado Intruso: no se distinguen identidades entre personas sin registrar.
+  La
+  autorización temporal de captura vence a los seis segundos sin consultas de
+  registro; la página deja de agregar eventos inmediatamente al desmarcar.
+- Se deduplican las secuencias y se ignoran respuestas en vuelo después de
+  desmarcar, detener el video o limpiar. Limpiar borra la lista de esta pestaña;
+  si el checkbox sigue activo se incorporarán las siguientes capturas nuevas.
+- Los últimos 50 eventos viven en la memoria de la pestaña, sin escrituras a
+  flash. Se pierden al recargar o cerrar. No es una bitácora continua sin navegador:
+  si se interrumpe la conexión pueden omitirse capturas. Cada pestaña tiene su lista.
+- La fecha se estima con el reloj del navegador menos la antigüedad de la captura
+  y se presenta con `Intl.DateTimeFormat`, zona `America/Lima`. Configurar bien el
+  reloj de la PC; no depende de que la zona local del navegador sea Perú.
 
 ## Archivos
 
@@ -143,8 +184,8 @@ muestran en la página y los nombres se insertan como texto, sin interpretar HTM
 ## Validación del desarrollo
 
 Compilación con el CLI de Arduino IDE y el paquete 2.0.17, con resolución inicial
-240x240: **3 092 881 bytes
-(98 % de 3 145 728)**; variables globales **74 548 bytes (22 %)**. Se conservaron
+240x240: **3 095 549 bytes
+(98 % de 3 145 728)**; variables globales **74 604 bytes (22 %)**. Se conservaron
 la configuración de placa y el espacio de aplicación; el margen restante es
 reducido para futuras ampliaciones.
 
@@ -157,6 +198,11 @@ capturas de escritorio y móvil. También se comprobó el binario de particiones
 La ampliación de interfaz pasó además las pruebas de spinner durante envío y
 espera, limpieza del nombre, confirmación/cancelación y aviso de éxito con
 SweetAlert2, y barra de capacidad con 2/7 y 7/7 registros.
+La reorganización pasó pruebas de nombre/foto por ID, Intruso sin foto del padrón,
+limpieza del panel sin rostro, captura de eventos conocidos/desconocidos,
+deduplicación, pausa al desmarcar y limpieza sin reaparecer el evento anterior.
+La fecha se verificó en America/Lima usando un navegador configurado en Asia/Tokyo.
+La nueva captura de eventos en firmware requiere prueba real después de Subir.
 
 Las pruebas de navegador usan respuestas simuladas: no prueban el detector,
 la escritura física de flash ni la calidad de reconocimiento. Para ejecutarlas,

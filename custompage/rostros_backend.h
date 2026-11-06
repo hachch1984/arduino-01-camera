@@ -4,8 +4,12 @@
 #include <LittleFS.h>
 #include <map>
 #include "cJSON.h"
+#include "mbedtls/base64.h"
 #include "freertos/semphr.h"
+#include "web_config.h"
+#if CUSTOMPAGE_EMBED_WEB_UI
 #include "rostros_assets.h"
+#endif
 
 namespace custompage {
 static SemaphoreHandle_t mutex = nullptr;
@@ -13,6 +17,12 @@ static bool storage = false;
 static std::map<int, String> names;
 static String pendingName, notice = "Listo. Inicia el video para reconocer rostros.";
 static String lastName;
+static int lastId = -1;
+static String eventImage, eventName;
+static uint32_t eventSequence = 0;
+static int64_t eventTime = 0, recordingUntil = 0;
+static int eventCandidate = -2;
+static int64_t candidateSince = 0, candidateSeen = 0;
 static int64_t deadline = 0, lastSeen = 0;
 static uint32_t revision = 0;
 static bool failed = false;
@@ -25,6 +35,10 @@ public:
     explicit operator bool() const { return acquired; }
 };
 static String filePath(int id, const char *ext) { return "/face-" + String(id) + ext; }
+static void resetEventWait() {
+    Lock lock;
+    if (lock) { eventCandidate = -2; candidateSince = 0; candidateSeen = 0; }
+}
 static void notify(const String &text, bool error = false) {
     notice = text; failed = error; ++revision;
 }
@@ -106,6 +120,31 @@ static bool portrait(fb_data_t *fb, const dl::detect::result_t &face, uint8_t **
     bool ok = fmt2jpg(crop, size, width, height, PIXFORMAT_RGB888, 80, jpg, length);
     free(crop); return ok;
 }
+// Caller holds mutex. Capture the same unannotated face that was classified.
+// A short lease renewed by the page avoids JPEG work when no one records events.
+static void captureEvent(fb_data_t *fb, const dl::detect::result_t &face, int id) {
+    int64_t now = esp_timer_get_time();
+    if (now >= recordingUntil) { eventCandidate = -2; return; }
+    // Require three seconds of observations with the same recognition result.
+    // Do not block the stream with delay(); evaluate on each classified frame.
+    if (eventCandidate != id || now - candidateSeen > 2500000) {
+        eventCandidate = id; candidateSince = now;
+    }
+    candidateSeen = now;
+    if (now - candidateSince < 3000000) return;
+    candidateSince = now; // Also space repeated captures and failed attempts.
+    uint8_t *jpg = nullptr; size_t length = 0;
+    if (!portrait(fb, face, &jpg, &length)) { free(jpg); return; }
+    size_t capacity = 4 * ((length + 2) / 3) + 1, written = 0;
+    unsigned char *encoded = (unsigned char *)malloc(capacity);
+    if (encoded && mbedtls_base64_encode(encoded, capacity, &written, jpg, length) == 0) {
+        encoded[written] = 0;
+        eventImage = (const char *)encoded;
+        eventName = id >= 0 ? displayName(id) : "Intruso";
+        eventTime = now; ++eventSequence;
+    }
+    free(encoded); free(jpg);
+}
 static void enroll(fb_data_t *fb, std::list<dl::detect::result_t> *results, Tensor<uint8_t> &tensor) {
     expire();
     if (!is_enrolling || results->size() != 1) return;
@@ -174,6 +213,24 @@ static esp_err_t list(httpd_req_t *req) {
     cJSON_AddBoolToObject(body, "failed", failed); cJSON_AddNumberToObject(body, "revision", revision);
     cJSON_AddNumberToObject(body, "limit", FACE_ID_SAVE_NUMBER); cJSON_AddStringToObject(body, "message", notice.c_str());
     cJSON_AddStringToObject(body, "lastName", esp_timer_get_time() - lastSeen < 2500000 ? lastName.c_str() : "");
+    bool current = lastSeen > 0 && esp_timer_get_time() - lastSeen < 2500000;
+    cJSON_AddBoolToObject(body, "faceVisible", current);
+    cJSON_AddNumberToObject(body, "lastId", current ? lastId : -1);
+    cJSON_AddNumberToObject(body, "eventSequence", eventSequence);
+    char query[100] = {}, record[8] = {}, after[16] = {};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "record", record, sizeof(record)) == ESP_OK && !strcmp(record, "1")) {
+        recordingUntil = esp_timer_get_time() + 6000000;
+        httpd_query_key_value(query, "after", after, sizeof(after));
+        if (eventSequence > strtoul(after, nullptr, 10) && eventImage.length() &&
+            esp_timer_get_time() - eventTime < 6000000) {
+            cJSON *event = cJSON_AddObjectToObject(body, "event");
+            cJSON_AddNumberToObject(event, "sequence", eventSequence);
+            cJSON_AddNumberToObject(event, "ageMs", (esp_timer_get_time() - eventTime) / 1000);
+            cJSON_AddStringToObject(event, "name", eventName.c_str());
+            cJSON_AddStringToObject(event, "image", eventImage.c_str());
+        }
+    }
     cJSON *people = cJSON_AddArrayToObject(body, "people");
     for (const auto &face : recognizer.get_enrolled_ids()) {
         cJSON *person = cJSON_CreateObject(); cJSON_AddNumberToObject(person, "id", face.id);
@@ -216,7 +273,7 @@ static esp_err_t removeFace(httpd_req_t *req) {
         recognizer.set_ids_from_flash(); return error(req, "No se pudo guardar la eliminacion.", "500 Internal Server Error");
     }
     if (storage) { LittleFS.remove(filePath(id, ".jpg")); LittleFS.remove(filePath(id, ".txt")); }
-    names.erase(id); lastName = ""; lastSeen = 0; notify("Eliminado: " + name); return ok(req);
+    names.erase(id); lastName = ""; lastSeen = 0; lastId = -1; notify("Eliminado: " + name); return ok(req);
 }
 static esp_err_t photo(httpd_req_t *req) {
     char query[160], text[16];
@@ -242,12 +299,19 @@ static esp_err_t asset(httpd_req_t *req, const uint8_t *data, size_t size, const
 }
 static void routes(httpd_handle_t server) {
     const httpd_uri_t routes[] = {
+#if CUSTOMPAGE_EMBED_WEB_UI
         {.uri="/rostros", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, rostros_html_gz, sizeof(rostros_html_gz), "text/html; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/app.js", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, rostros_js_gz, sizeof(rostros_js_gz), "application/javascript; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/rostros.css", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, rostros_css_gz, sizeof(rostros_css_gz), "text/css; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/bootstrap.min.css", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, bootstrap_css_gz, sizeof(bootstrap_css_gz), "text/css; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/sweetalert2.min.js", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, sweetalert_js_gz, sizeof(sweetalert_js_gz), "application/javascript; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/sweetalert2.min.css", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, sweetalert_css_gz, sizeof(sweetalert_css_gz), "text/css; charset=utf-8");}, .user_ctx=nullptr},
+#else
+        {.uri="/rostros", .method=HTTP_GET, .handler=[](httpd_req_t *r){
+            httpd_resp_set_type(r, "text/html; charset=utf-8");
+            return httpd_resp_sendstr(r, "<!doctype html><html lang='es'><meta charset='utf-8'><title>Camara</title><h1>La interfaz ahora esta en la PC</h1><p>En la PC ejecuta npm start y abre <a href='http://localhost:3000/rostros'>http://localhost:3000/rostros</a>.</p><p>La camara y el reconocimiento siguen funcionando en este dispositivo.</p></html>");
+        }, .user_ctx=nullptr},
+#endif
         {.uri="/api/rostros", .method=HTTP_GET, .handler=list, .user_ctx=nullptr},
         {.uri="/api/rostros/foto", .method=HTTP_GET, .handler=photo, .user_ctx=nullptr},
         {.uri="/api/rostros/registrar", .method=HTTP_POST, .handler=registerFace, .user_ctx=nullptr},
