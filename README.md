@@ -15,8 +15,8 @@ git clone --branch master https://github.com/hachch1984/arduino-01-camera.git Ca
 ```
 
 Abrir con **doble clic en `CameraWebServerS3.ino`**, como con la cámara anterior.
-El 5 de noviembre de 2026 se configuró también la apertura habitual de Arduino IDE
-para usar el paquete ESP32 2.0.17 de `%LOCALAPPDATA%\ArduinoS3Camera\data`.
+La apertura habitual de Arduino IDE usa el paquete ESP32 2.0.17 de
+`C:\Users\hachc\ArduinoS3Camera\data` (ruta corregida el 6 de noviembre de 2026).
 Los lanzadores `Abrir-Arduino.cmd` y `Abrir-Arduino.ps1` quedan como alternativas
 para abrir el mismo proyecto en la IDE habitual; ya no seleccionan otro perfil.
 
@@ -38,7 +38,8 @@ hay que comprobar la compatibilidad de las bibliotecas de detección y reconocim
 La versión 3.3.12 no conserva esas funciones en su ejemplo CameraWebServer.
 
 La configuración habitual está en `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`.
-Sus directorios `data` y `downloads` apuntan ahora a `ArduinoS3Camera`; se conservó
+Sus directorios `data` y `downloads` apuntan ahora a `%USERPROFILE%\ArduinoS3Camera`
+(fuera de AppData); se conservó
 la ubicación habitual de los proyectos y una copia de la configuración anterior
 junto al YAML, con el sufijo `.before-s3-20261106-043517Z.bak` (hora UTC).
 El entorno antiguo de `%LOCALAPPDATA%\Arduino15`, con ESP32 3.3.12, se conserva
@@ -92,7 +93,10 @@ Esto utiliza el perfil de pines; la placa adquirida es una ESP32-S3-CAM N16R8.
 1. Encender el hotspot del celular en 2.4 GHz con las credenciales configuradas
    en el archivo `.ino`. Esta publicación conserva los valores de Wi-Fi por
    indicación expresa del propietario; para usar otra red, editar `ssid` y `password`.
-2. Cargar el programa y abrir el monitor serie a 115200.
+2. Pulsar **Subir**, la flecha hacia la derecha (Ctrl+U). Esperar a que termine
+   la escritura y aparezca `Hash of data verified` y `Hard resetting via RTS pin`.
+   Abrir el **Monitor serie** (Ctrl+Mayús+M) a **115200**. Si falta el mensaje de
+   arranque, pulsar y soltar **EN/RST**, dejando BOOT sin pulsar.
 3. Comprobar PSRAM, sensor y la dirección mostrada por `Camera Ready!`.
 4. Conectar la PC a la misma red y abrir esa dirección por HTTP.
 5. Pulsar Start Stream. En modo RGB565 el ejemplo arranca a 240x240. La detección
@@ -170,3 +174,91 @@ usa los modelos `human_face_detect_*` y `face_recognition_112_*`, y la partició
   firmware ni se probó de nuevo el registro o la comparación de identidades.
 
 Fuente: https://github.com/espressif/arduino-esp32/tree/2.0.17/libraries/ESP32/examples/Camera/CameraWebServer
+
+## Configuración y diagnóstico: 6 de noviembre de 2026
+
+### Error de tamaño al compilar
+
+Se encontró `Sketch too big` / `text section exceeds available space in board`:
+el programa ocupaba 2 957 389 bytes, mientras que la partición predeterminada
+solo permitía 1 310 720 bytes. Seleccionar Flash Size de 16 MB por sí solo no
+amplía el espacio reservado para la aplicación.
+
+Se corrigió **Herramientas > Partition Scheme > 16M Flash (3MB APP/9.9MB FATFS)**
+y se dejó **Core Debug Level > Info**. La compilación desde Arduino IDE terminó
+correctamente: **2 977 453 / 3 145 728 bytes (94 %)** y **74 404 bytes (22 %)**
+de variables globales. Conservar también el `partitions.csv` del proyecto.
+La lista completa de opciones está en la sección «En Herramientas seleccionar».
+
+### Qué comprobar al volver a abrir el archivo INO
+
+1. La barra superior y la barra inferior deben decir **ESP32S3 Dev Module**.
+   **ESP32 Dev Module** es otra placa; comprobar que el nombre incluya **S3**.
+   En el buscador se puede escribir `ESP32S3 Dev Module`, sin guion.
+2. Elegir el puerto de la placa: **COM7** en esta instalación. Puede cambiar si
+   se cambia de conector o de PC. La conexión probada utiliza el USB-C junto a BOOT.
+3. Revisar **16 MB**, **OPI PSRAM** y **16M Flash (3MB APP/9.9MB FATFS)**.
+   Al cambiar de modelo, Arduino puede mostrar las opciones predeterminadas de
+   esa otra placa. Confirmar también las opciones USB de la lista anterior.
+4. Mantener **esp32 by Espressif Systems 2.0.17** en el Gestor de placas.
+5. Usar **Verificar (Ctrl+R)** para compilar y **Subir (Ctrl+U)** para grabar.
+   **Start Debugging / Iniciar depuración**, con el icono de insecto, inicia
+   otra herramienta. El servidor web arranca automáticamente al ejecutar el
+   firmware; **Start Stream** se pulsa después, dentro del navegador.
+
+### Aviso «Error getting Debug info: Unknown FQBN»
+
+En la revisión del 6 de noviembre la consola ya mostraba una carga terminada:
+`Wrote 2977824 bytes`, `Hash of data verified` y `Hard resetting via RTS pin`.
+Al mismo tiempo apareció `Error getting Debug info: Unknown FQBN: platform
+esp32:esp32 is not installed`. El aviso procede del componente de depuración;
+no invalida por sí solo una escritura cuyo hash fue verificado.
+
+La comprobación con el CLI incluido en Arduino, usando explícitamente
+`%USERPROFILE%\.arduinoIDE\arduino-cli.yaml`, confirmó que **esp32 2.0.17 sí
+estaba instalado**. La interfaz mostraba **ESP32 Dev Module** y el selector de
+placas estaba vacío. Son observaciones distintas: no se debe concluir únicamente
+por ese aviso que hay que reinstalar el paquete o cambiar los pines de la cámara.
+
+Si el selector vuelve a quedar vacío, cerrar todas las ventanas de Arduino,
+esperar a que termine el proceso y volver a abrir el INO. Revisar el Gestor de
+placas y la selección S3 antes de cargar. Reiniciar recuperó el catálogo en
+sesiones anteriores, pero no se ha demostrado una solución definitiva para
+su recurrencia. Conservar el mensaje y los registros si se repite.
+
+Hay un [reporte del mismo aviso al iniciar depuración en ESP32-S3](https://github.com/espressif/arduino-esp32/issues/11937)
+con directorios personalizados. Sirve como antecedente; no demuestra que esta
+PC tenga exactamente la misma causa. Para usar CameraWebServer por COM7 basta
+con Subir y el Monitor serie; configurar JTAG sería una tarea independiente.
+
+### Corrección de las rutas de instalación
+
+Durante esta revisión, la IDE abierta desde la sesión de asistencia resolvía
+`WiFi.h` dentro de
+`C:\Users\hachc\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\ArduinoS3Camera\data`.
+Se verificó que allí existía el paquete 2.0.17. La ruta real era distinta de
+la ruta de AppData escrita en el YAML, lo que explicaba la diferencia entre
+los contextos de apertura y requería corregir las comprobaciones anteriores.
+
+Se cerró Arduino y se copió el directorio completo `data` a una ubicación
+explícita fuera de AppData, conservando la copia anterior. El YAML habitual quedó:
+
+```yaml
+directories:
+    data: C:\Users\hachc\ArduinoS3Camera\data
+    downloads: C:\Users\hachc\ArduinoS3Camera\downloads
+```
+
+Estas líneas son un extracto: conservar las otras opciones del YAML. El respaldo
+previo al cambio es `%USERPROFILE%\.arduinoIDE\arduino-cli.yaml.before-explicit-path-20261106.bak`.
+Se actualizó también la comprobación de instalación de `Abrir-Arduino.cmd`.
+El CLI confirmó esp32 2.0.17 instalado usando la nueva ruta. Para una comprobación
+real de apertura manual, se volvió a abrir el INO con doble clic desde el
+Explorador de Windows, en vez de iniciar el ejecutable desde la asistencia.
+
+Resultado de esa apertura: **ESP32S3 Dev Module / COM7**, opciones S3 conservadas,
+Monitor serie a 115200 y compilación correcta desde la IDE: **2 977 341 bytes
+(94 %)**, **74 404 bytes (22 %)** de variables globales. El proceso del compilador
+se verificó ejecutándose desde `C:\Users\hachc\ArduinoS3Camera\data\packages\esp32\tools`.
+Esta última prueba fue de compilación; no se volvió a grabar el firmware ni se
+volvió a comprobar el video o el registro de personas.

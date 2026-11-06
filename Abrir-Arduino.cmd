@@ -1,6 +1,6 @@
 @echo off
 setlocal
-if not exist "%LOCALAPPDATA%\ArduinoS3Camera\data\packages\esp32\hardware\esp32\2.0.17\boards.txt" (
+if not exist "%USERPROFILE%\ArduinoS3Camera\data\packages\esp32\hardware\esp32\2.0.17\boards.txt" (
   echo Falta el paquete ESP32 2.0.17 de este proyecto.
   echo Consulta la seccion de versiones en README.md antes de continuar.
   pause
