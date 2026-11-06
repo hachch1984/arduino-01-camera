@@ -1,0 +1,20 @@
+# Archivos generados al compilar o cargar desde Arduino.
+/build/
+/out/
+.arduino/
+*.bin
+*.elf
+*.hex
+*.o
+*.a
+*.map
+*.log
+
+# Archivos temporales del sistema y del editor.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
