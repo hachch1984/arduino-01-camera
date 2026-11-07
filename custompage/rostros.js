@@ -1,5 +1,7 @@
 'use strict';
+/** Devuelve el elemento HTML por su id. Centraliza el acceso al DOM de la página. */
 const $ = id => document.getElementById(id);
+/** Configuración pública inyectada por /runtime.js en modo Node.js. No contiene la clave SMTP. */
 const app = window.CAMERA_APP || {};
 let sendingReport = false;
 let running = false, busy = false, state = null, revision = '', seenEvent = -1;
@@ -11,13 +13,22 @@ const dialogStyle = {
   customClass:{confirmButton:'btn btn-danger',cancelButton:'btn btn-secondary'},
 };
 const session = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+/**
+ * Envía una solicitud JSON a /api/rostros en el mismo origen. Node.js la reenvía al ESP32. Devuelve los
+ * datos o lanza el error HTTP; aborta tras 12 segundos.
+ */
 const api = async (path, options = {}) => {
   const response = await fetch('/api/rostros' + path, {cache:'no-store', headers:{'Content-Type':'application/json'}, ...options, signal:AbortSignal.timeout(12000)});
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'La cámara no pudo completar la operación.');
   return data;
 };
+/** Actualiza el texto y el color del aviso feedback. textContent evita interpretar mensajes como HTML. */
 const message = (text, danger = false, tone = 'secondary') => { $('feedback').textContent = text; $('feedback').className = 'alert alert-' + (danger ? 'danger' : tone); };
+/**
+ * Sincroniza botones, campo de nombre y spinner con el estado local y el del ESP32. Impide acciones
+ * incompatibles mientras hay un registro, una confirmación o un envío pendiente.
+ */
 const controls = () => {
   $('toggle').disabled = busy || confirmingDelete || !state || state.pending;
   $('enroll').disabled = busy || confirmingDelete || !running || !state || !state.storage || state.pending || state.people.length >= state.limit;
@@ -30,11 +41,19 @@ const controls = () => {
   $('cancel').disabled = busy;
   $('sendReport').disabled = !app.reports || sendingReport || !$('events').children.length;
 };
+/**
+ * Corta la conexión MJPEG al retirar src del img, limpia el reconocimiento visible e invalida respuestas de
+ * eventos que aún estén en vuelo. No borra el padrón ni los eventos de la pestaña.
+ */
 const stopVideo = () => {
   running = false; $('video').removeAttribute('src'); $('video').hidden = true; $('placeholder').hidden = false;
   $('toggle').textContent = 'Iniciar video'; $('recognition').textContent = 'Video detenido'; controls();
   renderRecognition(null); ++eventGeneration;
 };
+/**
+ * Presenta el último resultado facial informado por el ESP32. Busca lastId en people para mostrar nombre y
+ * foto del padrón, o Intruso; limpia el panel cuando no hay rostro reciente o video activo.
+ */
 const renderRecognition = data => {
   const visible = running && data?.faceVisible;
   const person = visible && data.lastId >= 0 ? data.people.find(p => p.id === data.lastId) : null;
@@ -49,6 +68,10 @@ const renderRecognition = data => {
     $('recognizedPhoto').alt = `Foto empadronada de ${person.name}`;
   } else $('recognizedPhoto').removeAttribute('src');
 };
+/**
+ * Añade una captura nueva usando sequence para descartar duplicados. Estima su instante con receivedAt
+ * menos ageMs, lo muestra en America/Lima y limita el DOM a los últimos 50 eventos de esta pestaña.
+ */
 const appendEvent = (event, receivedAt) => {
   if (!event || event.sequence <= eventCursor) return;
   eventCursor = event.sequence;
@@ -64,12 +87,21 @@ const appendEvent = (event, receivedAt) => {
   $('eventsEmpty').hidden = true; $('clearEvents').disabled = false;
   controls();
 };
+/**
+ * Habilita reconocimiento con POST /iniciar y conecta el img al stream MJPEG. En modo Node usa
+ * /camera-stream; el fallback directo usa el puerto HTTP siguiente de la cámara.
+ */
 const startVideo = async () => {
   await api('/iniciar', {method:'POST'});
   const url = new URL('/stream', location.href); url.port = String(Number(location.port || 80) + 1);
   $('video').src = app.streamUrl || url.href; $('video').hidden = false; $('placeholder').hidden = true;
   running = true; $('toggle').textContent = 'Detener video'; controls();
 };
+/**
+ * Aplica el snapshot JSON de la cámara a la interfaz: padrón, capacidad, resultado y mensajes. Solo
+ * reconstruye la lista de personas cuando cambia su firma de datos/revisión para evitar descargar las
+ * mismas fotos en cada consulta.
+ */
 const render = (data) => {
   state = data;
   $('count').textContent = `${data.people.length} / ${data.limit}`;
@@ -106,6 +138,10 @@ const render = (data) => {
   if (running) $('recognition').textContent = data.pending ? 'Esperando un solo rostro…' : data.faceVisible ? (data.lastId >= 0 ? 'Estado: rostro reconocido' : 'Estado: intruso') : 'Buscando un rostro…';
   controls();
 };
+/**
+ * Ejecuta una operación exclusiva de la interfaz. Activa busy, ejecuta fn, vuelve a consultar el estado y
+ * restaura controles en finally; los errores se muestran en feedback.
+ */
 const action = async (fn) => {
   if (busy) return;
   busy = true; controls();
@@ -113,6 +149,10 @@ const action = async (fn) => {
   catch (error) { message(error.message, true); }
   finally { busy = false; controls(); }
 };
+/**
+ * Pide confirmación con SweetAlert2 y, si se acepta, envía el id a POST /eliminar. La cámara elimina el
+ * identificador y sus archivos; solo después de la respuesta se informa el éxito.
+ */
 const deletePerson = async (person) => {
   if (busy || confirmingDelete || state?.pending) return;
   confirmingDelete = true; controls();
@@ -131,7 +171,12 @@ const deletePerson = async (person) => {
     await Swal.fire({...dialogStyle, title:'Registro eliminado', text:`Se eliminó el registro de ${person.name}.`, icon:'success', confirmButtonText:'Aceptar', customClass:{confirmButton:'btn btn-primary'}});
   });
 };
+/** Alterna el video a través de action para evitar pulsaciones simultáneas. */
 $('toggle').onclick = () => action(async () => { if (running) stopVideo(); else await startVideo(); });
+/**
+ * Valida el nombre en bytes UTF-8, activa el indicador y arma un único registro con POST /registrar. Limpia
+ * el nombre cuando la cámara acepta la solicitud; la captura real se completa luego en el firmware.
+ */
 $('enrollForm').onsubmit = event => {
   event.preventDefault(); const name = $('name').value.trim();
   if (busy || confirmingDelete || state?.pending) return;
@@ -143,14 +188,29 @@ $('enrollForm').onsubmit = event => {
     $('name').value = '';
   }).finally(() => { enrollmentSubmitting = false; controls(); });
 };
+/** Solicita POST /cancelar y refresca el estado del registro pendiente. */
 $('cancel').onclick = () => action(() => api('/cancelar', {method:'POST'}));
+/** Si falla el stream, cierra la conexión local y ofrece un mensaje de recuperación. */
 $('video').onerror = () => { stopVideo(); message('Se cortó el video. Cierra otras transmisiones e inténtalo de nuevo.',true); };
+/**
+ * Inicia o pausa la incorporación de eventos. Cambia eventGeneration y toma la secuencia actual como cursor
+ * para no reutilizar una respuesta anterior al cambio.
+ */
 $('recordEvents').onchange = () => { ++eventGeneration; eventCursor = state?.eventSequence || 0; };
+/**
+ * Borra únicamente la lista de eventos del navegador e invalida respuestas en vuelo. Si el checkbox
+ * continúa marcado, las siguientes capturas nuevas vuelven a añadirse.
+ */
 $('clearEvents').onclick = () => {
   ++eventGeneration; eventCursor = state?.eventSequence || 0;
   $('events').replaceChildren(); $('eventsEmpty').hidden = false; $('clearEvents').disabled = true;
   controls();
 };
+/**
+ * Toma una copia de los eventos visibles (JPEG base64, fecha ISO y nombre), valida destinatarios y la envía
+ * a POST /api/report de Node.js. Usa un requestId y el token público de sesión; bloquea dobles clics y
+ * espera hasta 90 segundos sin reintentos automáticos.
+ */
 $('sendReport').onclick = async () => {
   if(sendingReport || !app.reports) return;
   const recipients=$('reportEmails').value.trim();
@@ -172,7 +232,13 @@ if(app.reports) {
   $('reportHelp').textContent='Separa los correos con comas o saltos de línea. El servidor de la PC envía los eventos de esta lista mediante Brevo.';
   document.querySelector('a[href="/"]').href=app.cameraUrl+'/';
 }
+/** Cierra la transmisión cuando el navegador abandona esta página. */
 window.addEventListener('pagehide', stopVideo);
+/**
+ * Consulta el estado sin solapar iteraciones: programa la siguiente 1,8 segundos después de terminar. Si se
+ * registran eventos añade record=1 y after=cursor; esto renueva por 6 segundos la captura en el ESP32.
+ * Verifica la generación antes de aceptar respuestas.
+ */
 const poll = async () => {
   if (!busy) try {
     const generation = eventGeneration;

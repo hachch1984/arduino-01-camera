@@ -2,6 +2,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {parseEnv} = require('node:util');
+/**
+ * Lee secret.env desde la raíz del proyecto y da prioridad a process.env. Valida CAMERA_URL y devuelve por
+ * separado la configuración HTTP y SMTP; resuelve la ruta opcional de CA sin publicar secretos al
+ * navegador.
+ */
 const loadConfig = () => {
   const file = path.join(__dirname, '../../secret.env');
   const env = {...(fs.existsSync(file) ? parseEnv(fs.readFileSync(file, 'utf8')) : {}), ...process.env};

@@ -20,6 +20,12 @@ Abrir **http://localhost:3000/rostros**. También se puede hacer doble clic en
 encendido mientras se usa la página. Solo escucha en 127.0.0.1; no se abre un
 puerto de red ni el firewall. Si ya está iniciado, no abrir una segunda instancia.
 
+El lanzador abre una CMD propia titulada **Camara ESP32 - Servidor web** y ejecuta
+Node.js en primer plano. `SERVIDOR INICIADO` muestra el PID. Ctrl+C cierra el
+servidor y sus conexiones y muestra `SERVIDOR DETENIDO`; la CMD permanece abierta
+para revisar el resultado y cerrarla manualmente. Cerrar la ventana también
+termina el proceso que ejecuta en ella. No usar un lanzador oculto o desacoplado.
+
 Copiar `secret.env.example` como `secret.env` y completar los valores si se instala
 en otra PC. `secret.env` y `node_modules` están excluidos de Git. Nunca colocar
 la clave en el HTML/JavaScript del navegador. No se genera `mail_secrets.h` ni
