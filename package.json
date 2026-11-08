@@ -8,6 +8,11 @@
     "test": "node --test custompage/server/*.test.cjs",
     "smtp:verify": "node custompage/server/verify-smtp.cjs"
   },
-  "engines": { "node": ">=22" },
-  "dependencies": { "nodemailer": "10.3.1" }
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@vladmandic/human": "3.3.6",
+    "nodemailer": "10.3.1"
+  }
 }

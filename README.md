@@ -18,6 +18,12 @@ por Brevo. Configuración privada en `secret.env` (excluido de Git). Ver
 [instrucciones del servidor](custompage/server/README.md) y la limitación TLS
 detectada en esta PC antes de probar el envío real.
 
+**Análisis corporal en la PC:** abrir **http://localhost:3000/body**. Human analiza
+rostro, malla/iris, cuerpo, manos, gestos y modelos opcionales en el navegador.
+El ESP32 transmite JPEG; la selección inicial es Full HD **1920×1080**. Al detener,
+se restaura el tamaño anterior para el reconocimiento de la placa. Ver
+[arquitectura, firmware y pruebas de Body](custompage/body/README.md).
+
 **Activación por movimiento:** el checkbox **Usar PIR** permite iniciar video y
 reconocimiento con un HC-SR501 conectado a GPIO21 y detenerlos tras 60 s sin señal
 de movimiento. Desmarcado conserva el modo manual. Requiere el firmware nuevo y

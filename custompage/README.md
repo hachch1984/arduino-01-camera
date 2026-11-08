@@ -6,6 +6,11 @@ Consultar [server/README.md](server/README.md) para arranque, `secret.env`, SMTP
 pruebas y limitación TLS pendiente. Los apartados sobre interfaz embebida de este
 documento describen el modo anterior/opcional (`CUSTOMPAGE_EMBED_WEB_UI=1`).
 
+La página adicional **http://localhost:3000/body** usa Human en un Web Worker de
+Chrome para analizar el video del ESP32, inicialmente Full HD 1920×1080. Sus
+archivos, funcionamiento y cambios de captura JPEG se describen en
+[body/README.md](body/README.md). Esta página no se empaqueta en el firmware.
+
 ## Memoria del avance — 2026-11-06
 
 Se añadió `/rostros` como página independiente de los ajustes originales `/`.

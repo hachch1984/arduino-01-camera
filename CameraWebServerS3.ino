@@ -72,19 +72,20 @@ void setup() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_UXGA;
-  //config.pixel_format = PIXFORMAT_JPEG; // for streaming
-  config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
+  // Reserva buffers para Full HD; /body cambia el tamaño sin reiniciar el sensor.
+  // El reconocedor original admite JPEG: lo convierte a RGB888 antes de ejecutar su IA.
+  config.frame_size = FRAMESIZE_FHD;
+  config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 12;
   config.fb_count = 1;
 
-  // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
+  // Con PSRAM, reserva el tamaño máximo que usará /body (1920x1080).
   //                      for larger pre-allocated frame buffer.
   if(config.pixel_format == PIXFORMAT_JPEG){
     if(psramFound()){
-      config.jpeg_quality = 20;
+      config.jpeg_quality = 12;
       config.fb_count = 2;
       config.grab_mode = CAMERA_GRAB_LATEST;
     } else {
@@ -122,7 +123,8 @@ void setup() {
   }
   // drop down frame size for higher initial frame rate
   if(config.pixel_format == PIXFORMAT_JPEG){
-    s->set_framesize(s, FRAMESIZE_QVGA);
+    // /rostros conserva 240x240; Node solicita Full HD solo durante la sesión /body.
+    s->set_framesize(s, FRAMESIZE_240X240);
   }
 
 #if defined(CAMERA_MODEL_M5STACK_WIDE) || defined(CAMERA_MODEL_M5STACK_ESP32CAM)

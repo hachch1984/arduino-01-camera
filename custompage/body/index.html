@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Body · Human + ESP32-S3</title>
+  <link rel="stylesheet" href="/rostros/bootstrap.min.css">
+  <link rel="stylesheet" href="/body/body.css">
+  <script defer src="/runtime.js"></script>
+  <script defer src="/body/app.js"></script>
+</head>
+<body>
+<main class="container-fluid body-shell py-4">
+  <header class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div><p class="eyebrow mb-1">ESP32-S3 → PC · Human 3.3.6</p><h1 class="h3 mb-0">Análisis corporal en vivo</h1></div>
+    <a class="btn btn-outline-light" href="/rostros">Ir a reconocimiento de rostros</a>
+  </header>
+  <div id="feedback" class="alert alert-secondary" role="status" aria-live="polite">Listo para iniciar. Cierra cualquier otra transmisión de la cámara.</div>
+  <div class="row g-4">
+    <section class="col-xl-8">
+      <div class="card"><div class="card-body">
+        <h2 class="h5 mb-3">Cámara en vivo</h2>
+        <div class="camera-stage" id="stage">
+          <div id="placeholder" class="placeholder-text">El ESP32 envía video.<br>Tu navegador analiza el rostro, cuerpo y manos.</div>
+          <img id="video" alt="Video sin procesar del ESP32-S3" hidden>
+          <canvas id="overlay" aria-label="Puntos y recuadros del último análisis" hidden></canvas>
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
+          <button id="start" class="btn btn-info">Iniciar análisis</button>
+          <button id="stop" class="btn btn-outline-light" disabled>Detener</button>
+          <span id="loading" class="spinner-border spinner-border-sm text-info" aria-label="Procesando" hidden></span>
+          <label class="ms-sm-auto form-check"><input id="showOverlay" type="checkbox" class="form-check-input" checked> Mostrar puntos</label>
+        </div>
+        <dl class="metrics mt-3 mb-0">
+          <div><dt>Video recibido</dt><dd id="videoSize">—</dd></div>
+          <div><dt>Entrada de IA</dt><dd id="analysisSize">—</dd></div>
+          <div><dt>Análisis / segundo</dt><dd id="fps">—</dd></div>
+          <div><dt>Tiempo de IA</dt><dd id="latency">—</dd></div>
+          <div><dt>Motor</dt><dd id="backend">—</dd></div>
+        </dl>
+        <p class="small text-body-secondary mt-3 mb-0">Los puntos corresponden al último cuadro analizado. El video sigue su propia frecuencia. Full HD puede reducir la fluidez según el enlace Wi-Fi.</p>
+      </div></div>
+      <section class="card mt-4"><div class="card-body">
+        <h2 class="h5">Controles</h2>
+        <div class="row g-3 mt-1">
+          <div class="col-sm-4"><label for="resolution" class="form-label">Transmisión del ESP32</label><select id="resolution" class="form-select"><option value="fhd" selected>Full HD · 1920×1080</option><option value="hd">HD · 1280×720</option><option value="vga">VGA · 640×480</option></select></div>
+          <div class="col-sm-4"><label for="inputWidth" class="form-label">Ancho de análisis en PC</label><select id="inputWidth" class="form-select"><option value="640">640 px · más ligero</option><option value="960" selected>960 px · equilibrado</option><option value="1920">1920 px · más detalle</option></select></div>
+          <div class="col-sm-4"><label for="rate" class="form-label">Límite de análisis</label><select id="rate" class="form-select"><option value="2">2 por segundo</option><option value="5" selected>5 por segundo</option><option value="10">10 por segundo</option></select></div>
+        </div>
+        <fieldset class="mt-4"><legend class="fs-6">Modelos de Human</legend>
+          <div class="model-options">
+            <label class="form-check"><input id="face" class="form-check-input" type="checkbox" checked> Rostro, malla e iris</label>
+            <label class="form-check"><input id="emotion" class="form-check-input" type="checkbox" checked> Expresiones faciales</label>
+            <label class="form-check"><input id="body" class="form-check-input" type="checkbox" checked> Postura corporal</label>
+            <label class="form-check"><input id="hand" class="form-check-input" type="checkbox" checked> Manos y dedos</label>
+            <label class="form-check"><input id="liveness" class="form-check-input" type="checkbox"> Liveness y anti-spoof</label>
+          </div>
+        </fieldset>
+        <p class="small text-body-secondary mb-0">Detén el análisis para cambiar modelos o resolución. Los modelos se cargan desde esta PC, sin enviar las imágenes a un servicio externo.</p>
+      </div></section>
+    </section>
+    <aside class="col-xl-4 results">
+      <section class="card"><div class="card-body"><h2 class="h5">Cuerpo <span id="bodyCount" class="badge text-bg-secondary">0</span></h2><div id="bodyResults" class="result-list">Sin análisis todavía.</div></div></section>
+      <section class="card"><div class="card-body"><h2 class="h5">Rostros <span id="faceCount" class="badge text-bg-secondary">0</span></h2><div id="faceResults" class="result-list">Sin análisis todavía.</div><p class="small text-body-secondary mt-2 mb-0">Las expresiones son estimaciones del modelo, no una medición del estado emocional. Los IDs son seguimientos de esta sesión y no se vinculan al padrón.</p></div></section>
+      <section class="card"><div class="card-body"><h2 class="h5">Manos <span id="handCount" class="badge text-bg-secondary">0</span></h2><div id="handResults" class="result-list">Sin análisis todavía.</div></div></section>
+      <section class="card"><div class="card-body"><h2 class="h5">Gestos</h2><div id="gestureResults" class="result-list">Sin análisis todavía.</div></div></section>
+    </aside>
+  </div>
+  <footer class="small text-body-secondary mt-4">Biblioteca <a href="https://github.com/vladmandic/human" target="_blank" rel="noopener">Human</a> · <a href="/body/vendor/LICENSE">Licencia</a> · Esta página funciona con el servidor Node.js de la PC.</footer>
+</main>
+</body>
+</html>
