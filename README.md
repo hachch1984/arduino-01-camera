@@ -18,6 +18,12 @@ por Brevo. Configuración privada en `secret.env` (excluido de Git). Ver
 [instrucciones del servidor](custompage/server/README.md) y la limitación TLS
 detectada en esta PC antes de probar el envío real.
 
+**Activación por movimiento:** el checkbox **Usar PIR** permite iniciar video y
+reconocimiento con un HC-SR501 conectado a GPIO21 y detenerlos tras 60 s sin señal
+de movimiento. Desmarcado conserva el modo manual. Requiere el firmware nuevo y
+la página abierta; no corta la alimentación de la placa. Ver
+[conexión, arquitectura y prueba del PIR](custompage/PIR.md).
+
 ## Abrir y compilar
 
 Para descargar este repositorio, conservar el nombre de carpeta que espera Arduino:

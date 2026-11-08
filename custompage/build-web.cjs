@@ -6,6 +6,8 @@ const root = __dirname;
 const assets = [
   ['rostros_html', 'rostros.html'],
   ['rostros_js', 'rostros.js'],
+  ['tabs_js', 'tabs.js'],
+  ['avisos_js', 'avisos.js'],
   ['rostros_css', 'rostros.css'],
   ['bootstrap_css', 'vendor/bootstrap.min.css'],
   ['sweetalert_js', 'vendor/sweetalert2.min.js'],

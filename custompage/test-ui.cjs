@@ -26,12 +26,17 @@ const run = async () => {
         if (url.pathname.endsWith('/eliminar')) {deletes++;state.people=state.people.filter(p=>p.id!==request.postDataJSON().id);state.revision++;state.message='Eliminado';}
         return route.fulfill({json:{ok:true}});
       }
-      const assets = {'/rostros':['rostros.html','text/html'],'/rostros/app.js':['rostros.js','application/javascript'],'/rostros/rostros.css':['rostros.css','text/css'],'/rostros/bootstrap.min.css':['vendor/bootstrap.min.css','text/css'],'/rostros/sweetalert2.min.js':['vendor/sweetalert2.min.js','application/javascript'],'/rostros/sweetalert2.min.css':['vendor/sweetalert2.min.css','text/css']};
+      const assets = {'/rostros':['rostros.html','text/html'],'/rostros/app.js':['rostros.js','application/javascript'],'/rostros/avisos.js':['avisos.js','application/javascript'],'/rostros/rostros.css':['rostros.css','text/css'],'/rostros/bootstrap.min.css':['vendor/bootstrap.min.css','text/css'],'/rostros/sweetalert2.min.js':['vendor/sweetalert2.min.js','application/javascript'],'/rostros/sweetalert2.min.css':['vendor/sweetalert2.min.css','text/css']};
+      assets['/rostros/tabs.js']=['tabs.js','application/javascript'];
       const asset = assets[url.pathname];
       if (!asset) return route.fulfill({status:404,body:'Not found'});
       return route.fulfill({contentType:asset[1],body:fs.readFileSync(path.join(__dirname,asset[0]))});
     });
     await page.goto('http://camera.test/rostros');
+    assert.equal(await page.getByRole('tab').count(),3);
+    assert.equal(await page.locator('#padronTab').getAttribute('aria-selected'),'true');
+    assert.equal(await page.locator('#eventsSection').isHidden(),true);
+    assert.equal(await page.locator('#noticeSection').isHidden(),true);
     await page.waitForFunction(()=>document.querySelector('#count').textContent==='1 / 7');
     assert.equal(await page.locator('#enroll').isDisabled(),true);
     assert.match(await page.locator('#people').innerText(),/Sin foto/);
@@ -60,6 +65,8 @@ const run = async () => {
     await page.waitForFunction(()=>!document.querySelector('#recognizedDetails').hidden);
     assert.equal(await page.locator('#recognizedName').textContent(),registeredName);
     assert.match(await page.locator('#recognizedPhoto').getAttribute('src'),/id=1/);
+    await page.getByRole('tab',{name:'Eventos',exact:true}).click();
+    assert.equal(await page.locator('#video').isVisible(),true);
     await page.locator('#recordEvents').check();
     state.eventSequence=1;state.event={sequence:1,ageMs:1000,name:registeredName,image:image.toString('base64')};
     await page.waitForFunction(()=>document.querySelector('#events').children.length===1);
@@ -74,6 +81,11 @@ const run = async () => {
     assert.ok((await page.locator('#events').innerText()).includes(registeredName));
     assert.equal(await page.locator('#events time').evaluate(el=>el.textContent===new Intl.DateTimeFormat('es-PE',{timeZone:'America/Lima',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true}).format(new Date(el.dateTime))),true);
     await page.waitForTimeout(2000);assert.equal(await page.locator('#events article').count(),1);
+    await page.getByRole('tab',{name:'Padrón',exact:true}).click();
+    assert.equal(await page.locator('#recordEvents').isChecked(),true);
+    assert.equal(await page.locator('#video').isVisible(),true);
+    await page.getByRole('tab',{name:'Eventos',exact:true}).click();
+    assert.equal(await page.locator('#events article').count(),1);
     await page.locator('#recordEvents').uncheck();
     state.lastId=-1;state.eventSequence=2;state.event={...state.event,sequence:2,name:'Intruso'};
     await page.waitForFunction(()=>document.querySelector('#recognizedName').textContent==='Intruso');
@@ -90,6 +102,7 @@ const run = async () => {
     await page.waitForFunction(()=>document.querySelector('#recognizedName').textContent==='Sin reconocimiento');
     assert.equal(await page.locator('#sendReport').isDisabled(),true);
     assert.equal(await page.getByText('Emoción detectada',{exact:true}).count(),0);
+    await page.getByRole('tab',{name:'Padrón',exact:true}).click();
     await page.locator('#people button').last().click();
     await page.locator('.swal2-popup').waitFor({state:'visible'});
     assert.ok((await page.locator('.swal2-html-container').innerText()).includes(registeredName));

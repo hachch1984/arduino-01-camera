@@ -6,6 +6,7 @@ const {randomUUID} = require('node:crypto');
 const {loadConfig} = require('./config.cjs');
 const {buildReport} = require('./report.cjs');
 const {createMailer,mailError} = require('./mailer.cjs');
+const {createAlerts} = require('./alerts.cjs');
 /** Responde JSON UTF-8 con el código HTTP indicado y sin caché. Es la salida común para resultados y errores del servidor local. */
 const json = (res,status,body) => {res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
 /** Consume el cuerpo HTTP por fragmentos y lo convierte a JSON. Rechaza cargas mayores de 8.500.000 bytes antes de construir el reporte completo. */
@@ -21,6 +22,7 @@ const readJson = async req => {
  */
 const createServer = (config,mailer=createMailer(config.smtp)) => {
   const token=randomUUID(), jobs=new Map();let sending=false,streamActive=false;
+  const alerts=createAlerts({mailer,sender:config.smtp.sender,isMailBusy:()=>sending});
   /**
    * Reenvía solicitudes HTTP al ESP32 configurado en CAMERA_URL. Para video usa /stream en el puerto
    * siguiente (normalmente 81), permite una transmisión local y conecta streams con pipe para transmitir sin
@@ -29,9 +31,26 @@ const createServer = (config,mailer=createMailer(config.smtp)) => {
   const proxy = (req,res,stream=false) => {
     if(stream && streamActive) return json(res,409,{error:'Ya hay un video abierto. Cierra la otra transmision.'});
     const target=new URL(stream?'/stream':req.url,config.camera);
-    if(stream) {target.port=String(Number(config.camera.port||80)+1);streamActive=true;}
+    // Node.js controla el ticket; el navegador no puede pedir capturas durante la espera SMTP.
+    if(!stream&&target.pathname==='/api/rostros'){
+      target.searchParams.delete('notify');
+      const ticket=target.searchParams.get('watch')==='1'?alerts.captureTicket():0;
+      if(ticket)target.searchParams.set('notify',String(ticket));
+    }
+    if(stream) {
+      target.port=String(Number(config.camera.port||80)+1);streamActive=true;
+      // Conserva solo el modo PIR solicitado; el ESP32 aplica el corte por inactividad en cada frame.
+      if(new URL(req.url,'http://localhost').searchParams.get('pir')==='1')target.searchParams.set('pir','1');
+    }
     /** Al llegar la respuesta del ESP32, conserva el estado HTTP y el tipo de contenido y pasa sus bytes directamente al navegador. */
     const upstream=http.request(target,{method:req.method,headers:{...(req.headers['content-type']?{'Content-Type':req.headers['content-type']}:{}),...(req.headers['content-length']?{'Content-Length':req.headers['content-length']}:{}),Connection:'close'}},response=>{
+      // Solo observa JSON de estado solicitado mientras el video está activo.
+      // El correo se envía en segundo plano y no retiene la respuesta a la web.
+      if(!stream&&req.method==='GET'&&target.pathname==='/api/rostros'&&target.searchParams.get('watch')==='1'&&response.statusCode===200){
+        let size=0;const chunks=[];
+        response.on('data',chunk=>{size+=chunk.length;if(size<=1000000)chunks.push(chunk);});
+        response.on('end',()=>{if(size<=1000000){try{void alerts.observe(JSON.parse(Buffer.concat(chunks).toString('utf8')));}catch{ /* Una respuesta no JSON no dispara avisos. */ }}});
+      }
       res.writeHead(response.statusCode,{'Content-Type':response.headers['content-type']||'application/octet-stream','Cache-Control':'no-store'});response.pipe(res);
     });
     upstream.setTimeout(stream?20000:12000,()=>upstream.destroy(new Error('Tiempo de espera de la camara agotado.')));
@@ -44,7 +63,7 @@ const createServer = (config,mailer=createMailer(config.smtp)) => {
     res.on('close',()=>{upstream.destroy();if(stream)streamActive=false;});req.pipe(upstream);
   };
   const assets={
-    '/rostros/app.js':['rostros.js','application/javascript'], '/rostros/rostros.css':['rostros.css','text/css'],
+    '/rostros/app.js':['rostros.js','application/javascript'], '/rostros/avisos.js':['avisos.js','application/javascript'], '/rostros/tabs.js':['tabs.js','application/javascript'], '/rostros/rostros.css':['rostros.css','text/css'],
     '/rostros/bootstrap.min.css':['vendor/bootstrap.min.css','text/css'], '/rostros/sweetalert2.min.js':['vendor/sweetalert2.min.js','application/javascript'],
     '/rostros/sweetalert2.min.css':['vendor/sweetalert2.min.css','text/css'],
   };
@@ -69,11 +88,25 @@ const createServer = (config,mailer=createMailer(config.smtp)) => {
        */
       if(req.method==='GET' && url.pathname==='/runtime.js') {
         res.writeHead(200,{'Content-Type':'application/javascript','Cache-Control':'no-store'});
-        return res.end('window.CAMERA_APP='+JSON.stringify({reports:true,token,streamUrl:'/camera-stream',cameraUrl:config.camera.origin})+';');
+        return res.end('window.CAMERA_APP='+JSON.stringify({reports:true,alerts:true,token,streamUrl:'/camera-stream',cameraUrl:config.camera.origin})+';');
       }
       /** Sirve únicamente los archivos de la lista assets. No expone libremente la carpeta del proyecto ni secret.env. */
       if(req.method==='GET' && assets[url.pathname]) {
         const [file,type]=assets[url.pathname];res.writeHead(200,{'Content-Type':type+'; charset=utf-8','Cache-Control':'no-cache'});return fs.createReadStream(path.join(__dirname,'..',file)).pipe(res);
+      }
+      /** Configuración automática de avisos y contador compartido para todas las pestañas. */
+      if(url.pathname==='/api/avisos'&&req.method==='GET')return json(res,200,alerts.state());
+      /** Sirve la copia del JPEG adjunto: consultar la vista previa no captura otro cuadro ni consume CPU del ESP32. */
+      if(url.pathname==='/api/avisos/foto'&&req.method==='GET'){
+        const image=alerts.photo(url.searchParams.get('id'));
+        if(!image)return json(res,404,{error:'Captura de aviso no disponible.'});
+        res.writeHead(200,{'Content-Type':'image/jpeg','Cache-Control':'no-store','Content-Length':image.length});return res.end(image);
+      }
+      if(url.pathname==='/api/avisos'&&req.method==='POST'){
+        if(req.headers['x-report-token']!==token||!req.headers['content-type']?.startsWith('application/json'))return json(res,403,{error:'Recarga la pagina antes de configurar avisos.'});
+        const payload=await readJson(req);
+        if(payload.enabled&&(!config.smtp.login||!config.smtp.key||!config.smtp.sender))return json(res,503,{error:'Completa secret.env en el servidor.'});
+        try{return json(res,200,alerts.configure(payload));}catch(error){return json(res,400,{error:error.message});}
       }
       /**
        * Recibe la copia de eventos del navegador, valida token y JSON, comprueba requestId y evita duplicar el
@@ -87,7 +120,7 @@ const createServer = (config,mailer=createMailer(config.smtp)) => {
         if(typeof payload.requestId!=='string'||!/^[a-zA-Z0-9-]{16,80}$/.test(payload.requestId)) return json(res,400,{error:'Identificador de envio invalido.'});
         const previous=jobs.get(payload.requestId);
         if(previous) return json(res,previous.status,previous.body);
-        if(sending) return json(res,409,{error:'Ya hay un reporte enviandose. Espera a que termine.'});
+        if(sending||alerts.state().sending) return json(res,409,{error:'Ya hay un correo enviandose. Espera a que termine.'});
         let report;try {report=buildReport(payload,config.smtp.sender);}catch(error){return json(res,400,{error:error.message});}
         sending=true;jobs.set(payload.requestId,{status:409,body:{error:'Este reporte ya se esta enviando.'}});
         try {

@@ -7,6 +7,7 @@ let sendingReport = false;
 let running = false, busy = false, state = null, revision = '', seenEvent = -1;
 let enrollmentSubmitting = false, confirmingDelete = false;
 let eventCursor = 0, eventGeneration = 0;
+let closed = false, disconnected = false, pirRetryAt = 0, pirWindowUntil = 0;
 const peruTime = new Intl.DateTimeFormat('es-PE', {timeZone:'America/Lima', year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
 const dialogStyle = {
   background:'#182231', color:'#dee2e6', buttonsStyling:false,
@@ -30,7 +31,9 @@ const message = (text, danger = false, tone = 'secondary') => { $('feedback').te
  * incompatibles mientras hay un registro, una confirmación o un envío pendiente.
  */
 const controls = () => {
-  $('toggle').disabled = busy || confirmingDelete || !state || state.pending;
+  $('toggle').disabled = busy || confirmingDelete || !state || state.pending || $('usePir').checked;
+  $('toggle').textContent = $('usePir').checked ? 'Controlado por PIR' : running ? 'Detener video' : 'Iniciar video';
+  $('usePir').disabled = busy || confirmingDelete || !state?.pir || state.pending;
   $('enroll').disabled = busy || confirmingDelete || !running || !state || !state.storage || state.pending || state.people.length >= state.limit;
   $('name').disabled = busy || confirmingDelete || !!state?.pending;
   const processing = enrollmentSubmitting || !!state?.pending;
@@ -49,6 +52,16 @@ const stopVideo = () => {
   running = false; $('video').removeAttribute('src'); $('video').hidden = true; $('placeholder').hidden = false;
   $('toggle').textContent = 'Iniciar video'; $('recognition').textContent = 'Video detenido'; controls();
   renderRecognition(null); ++eventGeneration;
+};
+/** Presenta estabilización, espera y movimiento real de GPIO21; no infiere presencia a partir de la imagen. */
+const renderPir = motion => {
+  if (!state) {$('pirStatus').textContent='Esperando conexión con el sensor…';return;}
+  if (!motion) {$('pirStatus').textContent='Para usar el PIR, sube el firmware actualizado al ESP32.';return;}
+  if (!motion.ready) {$('pirStatus').textContent=`PIR GPIO${motion.gpio}: estabilizando… ${Math.ceil(motion.warmupMs/1000)} s` ;return;}
+  if (!$('usePir').checked) {$('pirStatus').textContent='PIR listo · Modo manual. Marca Usar PIR para activar por movimiento.';return;}
+  $('pirStatus').textContent = motion.active ? 'PIR: movimiento detectado.' : running && motion.cameraAllowed
+    ? `PIR: sin movimiento. El video se detiene en ${Math.ceil(motion.remainingMs/1000)} s.`
+    : 'PIR: esperando movimiento para activar la cámara.';
 };
 /**
  * Presenta el último resultado facial informado por el ESP32. Busca lastId en people para mostrar nombre y
@@ -91,11 +104,15 @@ const appendEvent = (event, receivedAt) => {
  * Habilita reconocimiento con POST /iniciar y conecta el img al stream MJPEG. En modo Node usa
  * /camera-stream; el fallback directo usa el puerto HTTP siguiente de la cámara.
  */
-const startVideo = async () => {
+const startVideo = async (byPir = false) => {
   await api('/iniciar', {method:'POST'});
+  if (closed) return;
   const url = new URL('/stream', location.href); url.port = String(Number(location.port || 80) + 1);
-  $('video').src = app.streamUrl || url.href; $('video').hidden = false; $('placeholder').hidden = true;
+  const stream = new URL(app.streamUrl || url.href,location.href);
+  if (byPir) stream.searchParams.set('pir','1');
+  $('video').src = stream.href; $('video').hidden = false; $('placeholder').hidden = true;
   running = true; $('toggle').textContent = 'Detener video'; controls();
+  if (byPir) message('PIR: movimiento detectado. Video y reconocimiento activados.');
 };
 /**
  * Aplica el snapshot JSON de la cámara a la interfaz: padrón, capacidad, resultado y mensajes. Solo
@@ -103,7 +120,11 @@ const startVideo = async () => {
  * mismas fotos en cada consulta.
  */
 const render = (data) => {
+  // Tras recuperar la conexión, vuelve a aplicar el mensaje aunque no cambió la revisión del padrón.
+  if (disconnected) {seenEvent = -1; disconnected = false;}
   state = data;
+  pirWindowUntil = Date.now() + (data.pir?.remainingMs || 0);
+  renderPir(data.pir);
   $('count').textContent = `${data.people.length} / ${data.limit}`;
   const occupied = data.people.length;
   const percent = data.limit > 0 ? Math.min(100, Math.round(occupied * 100 / data.limit)) : 0;
@@ -173,6 +194,33 @@ const deletePerson = async (person) => {
 };
 /** Alterna el video a través de action para evitar pulsaciones simultáneas. */
 $('toggle').onclick = () => action(async () => { if (running) stopVideo(); else await startVideo(); });
+/** Cambia de modo sin navegar ni borrar eventos. Al cambiar se cierra el stream para aplicar la política correcta. */
+$('usePir').onchange = () => {
+  stopVideo(); pirRetryAt = 0; renderPir(state?.pir);
+  message($('usePir').checked ? 'Modo PIR activado. La cámara espera movimiento.' : 'Modo manual activado. Puedes iniciar el video con el botón.');
+};
+/**
+ * Inicia un solo stream si el PIR permite actividad. Al vencer los 60 s lo cierra y cancela un registro
+ * pendiente para que no quede esperando sin imágenes. La placa también corta el stream con pir=1.
+ * Reintenta fallos como máximo cada 5 s, solo mientras haya señal/ventana válida y la página esté abierta.
+ */
+const synchronizePir = async data => {
+  if (closed || !$('usePir').checked || busy || confirmingDelete) return;
+  const motion = data.pir;
+  if (!motion?.ready || !motion.cameraAllowed) {
+    if (running) {
+      stopVideo();
+      if (data.pending) await action(() => api('/cancelar',{method:'POST'}));
+      message('PIR: video detenido. Esperando movimiento.');
+    }
+    renderPir(motion); return;
+  }
+  if (!running && Date.now() >= pirRetryAt) {
+    pirRetryAt = Date.now() + 5000;
+    await action(() => startVideo(true));
+    if (running) pirRetryAt = 0;
+  }
+};
 /**
  * Valida el nombre en bytes UTF-8, activa el indicador y arma un único registro con POST /registrar. Limpia
  * el nombre cuando la cámara acepta la solicitud; la captura real se completa luego en el firmware.
@@ -191,7 +239,15 @@ $('enrollForm').onsubmit = event => {
 /** Solicita POST /cancelar y refresca el estado del registro pendiente. */
 $('cancel').onclick = () => action(() => api('/cancelar', {method:'POST'}));
 /** Si falla el stream, cierra la conexión local y ofrece un mensaje de recuperación. */
-$('video').onerror = () => { stopVideo(); message('Se cortó el video. Cierra otras transmisiones e inténtalo de nuevo.',true); };
+$('video').onerror = () => {
+  stopVideo();
+  if ($('usePir').checked) {
+    pirRetryAt = Date.now() + 5000;
+    if (Date.now() >= pirWindowUntil) message('PIR: video detenido. Esperando movimiento.');
+    else message('Se interrumpió el video. El modo PIR reintentará si sigue detectando movimiento.',true);
+    renderPir(state?.pir);
+  } else message('Se cortó el video. Cierra otras transmisiones e inténtalo de nuevo.',true);
+};
 /**
  * Inicia o pausa la incorporación de eventos. Cambia eventGeneration y toma la secuencia actual como cursor
  * para no reutilizar una respuesta anterior al cambio.
@@ -233,21 +289,23 @@ if(app.reports) {
   document.querySelector('a[href="/"]').href=app.cameraUrl+'/';
 }
 /** Cierra la transmisión cuando el navegador abandona esta página. */
-window.addEventListener('pagehide', stopVideo);
+window.addEventListener('pagehide', () => {closed = true; stopVideo();});
 /**
  * Consulta el estado sin solapar iteraciones: programa la siguiente 1,8 segundos después de terminar. Si se
  * registran eventos añade record=1 y after=cursor; esto renueva por 6 segundos la captura en el ESP32.
  * Verifica la generación antes de aceptar respuestas.
  */
 const poll = async () => {
+  if (closed) return;
   if (!busy) try {
     const generation = eventGeneration;
     const recording = running && $('recordEvents').checked;
-    const data = await api(recording ? `?record=1&after=${eventCursor}` : '');
+    const data = await api(recording ? `?watch=1&record=1&after=${eventCursor}` : `?watch=${running?1:0}`);
     render(data);
     if (data.eventSequence < eventCursor) eventCursor = data.eventSequence;
     if (recording && running && $('recordEvents').checked && generation === eventGeneration) appendEvent(data.event, Date.now());
-  } catch (error) { state = null; controls(); renderRecognition(null); $('recognition').textContent = 'Sin conexión'; message('Sin conexión: ' + error.message, true); }
-  setTimeout(poll, 1800);
+    await synchronizePir(data);
+  } catch (error) { disconnected = true; state = null; if ($('usePir').checked) stopVideo(); controls(); renderRecognition(null); renderPir(null); $('recognition').textContent = 'Sin conexión'; message('Sin conexión: ' + error.message, true); }
+  if (!closed) setTimeout(poll, 1800);
 };
 poll();

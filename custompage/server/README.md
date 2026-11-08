@@ -35,7 +35,85 @@ se compilan credenciales SMTP en el firmware: el usuario eligió finalmente Node
 deben estar conectados al mismo hotspot. Cambiar `secret.env` requiere reiniciar
 Node.js. La clave SMTP es distinta de una API key HTTP de Brevo.
 
-## Reporte
+## Aviso automático de rostro
+
+La sección **Aviso** tiene un checkbox y destinatarios separados por comas. No
+incluye botones de guardar ni de simulación. Los cambios se aplican al terminar
+de escribir (500 ms) o al salir del campo. Admite de 1 a 20 correos válidos.
+
+- Requiere iniciar el video y mantener abierta la página en Node.js. Funciona
+  aunque **Registrar eventos** esté desmarcado.
+- `rostros.js` agrega `watch=1` al consultar estado con video activo. El proxy
+  agrega `notify=<ticket>` solo cuando puede enviarse otro aviso. No abre una
+  segunda consulta de estado. El firmware renovado reconoce `notify` y publica
+  `noticeSupported: true`; una versión anterior deja los avisos desactivados con
+  un mensaje para actualizar la placa.
+- `captureNotice()` recorta el primer rostro único del mismo cuadro BGR888 que
+  acaba de clasificar `run_face_recognition()`, antes de dibujar nombres y cajas.
+  Guarda JPEG base64, nombre/Intruso, ticket y tiempo de captura en RAM. Captura
+  una vez por ticket; la solicitud caduca a los 6 s sin renovarse. Node.js también
+  renueva tickets sin respuesta tras 6 s para recuperarse de cortes de red. No guarda fotos
+  de avisos en LittleFS ni cambia el padrón, pines, resolución o particiones.
+- La siguiente respuesta de estado incluye `noticeCapture: {ticket, ageMs, name,
+  image}`. `alerts.cjs` exige el ticket vigente y una antigüedad inferior a 6 s.
+  La captura es inmediata al clasificar el rostro, sin la espera de 3 s de los
+  eventos. Su traslado a Node.js depende del polling (1,8 s después de responder
+  la consulta anterior) y de la red; no implica entrega instantánea del correo.
+- El correo incluye fecha/hora de captura en Perú (día/mes/año, 12 h), nombre o
+  Intruso y `captura-aviso.jpg` como adjunto MIME y referencia CID en el cuerpo.
+  La sección muestra exactamente ese JPEG, no la foto del padrón. Node.js sirve
+  la copia del adjunto sin volver a capturar ni consultar el ESP32. Se muestra si
+  está enviando, fue aceptado por Brevo o no se confirmó el envío.
+- Mientras Nodemailer está enviando, no admite otro aviso. Al terminar espera
+  **5 segundos completos** antes del siguiente. Es una espera por instancia del
+  servidor, compartida entre pestañas. Cambiar destinatarios o desactivar/activar
+  no borra el contador.
+- Si siguen llegando detecciones tras la espera puede enviar otro correo, incluso
+  si es la misma persona. No guarda una cola de detecciones durante la espera.
+- Un fallo o rechazo SMTP pausa los avisos y muestra el error. Revisar Brevo antes
+  de reactivar, porque un error de red puede dejar incierto el resultado del envío.
+- Desactivar impide nuevos envíos, pero no revoca un correo ya entregado al SMTP.
+- La configuración vive en RAM de Node.js: reiniciar el servidor deja el checkbox
+  apagado y los destinatarios vacíos. Recargar una pestaña consulta la configuración
+  vigente del servidor. Conserva solo la última foto de aviso en RAM; se pierde
+  al reiniciar Node.js. La lista de eventos sigue siendo propia de cada navegador.
+
+`GET /api/avisos` devuelve configuración, `sending`, `remainingMs`, `lastError` y
+los metadatos `capture: {id, name, at, status}` (o null). No repite el JPEG en cada
+sondeo. `GET /api/avisos/foto?id=ID` devuelve solo la última foto, con el ID vigente;
+un ID desconocido devuelve 404. La web pide la foto una vez por nuevo ID.
+`POST /api/avisos` exige el token de sesión y recibe `{enabled, recipients}`.
+`avisos.js` actualiza el contador localmente cada 250 ms y consulta solo a Node.js
+cada segundo. No se agregan llamadas de sondeo al ESP32 para este contador.
+
+Pruebas: `npm test` cubre foto/adjunto idénticos, MIME, tickets antiguos, espera
+desde el fin de SMTP, concurrencia, desactivación, firmware antiguo, JPEG inválido,
+errores y detecciones con `watch=1` sin `record=1`. La interfaz se
+comprueba con `node custompage/test-avisos.cjs` y Playwright configurado como en
+`custompage/test-ui.cjs`. Las pruebas no envían correos reales.
+
+## Pestañas de administración
+
+El panel de cámara incluye **Usar PIR**. Su funcionamiento, conexión a GPIO21,
+tiempo de estabilización y corte tras 60 s sin señal están en [PIR.md](../PIR.md).
+El proxy de video conserva `pir=1` para que la propia placa aplique el corte entre
+cuadros. Requiere reiniciar Node.js y Subir el firmware actualizado.
+
+**Padrón**, **Eventos** y **Aviso** ocupan paneles separados debajo de la cámara y
+el reconocimiento, que permanecen visibles. `tabs.js` cambia clases Bootstrap y
+visibilidad de nodos existentes; no navega, recarga ni recrea formularios. Cambiar
+de panel mantiene el video, los datos escritos, eventos y avisos activados. Los
+avisos y la captura de eventos continúan aunque su panel esté oculto.
+
+Se admiten clic, Enter/Espacio, flechas izquierda/derecha e Inicio/Fin. Los roles
+tablist/tab/tabpanel, aria-selected, aria-controls y tabindex mantienen el foco y
+la selección accesibles. La primera pestaña al abrir es Padrón.
+
+Para aplicar estos cambios, detener Node.js con Ctrl+C y volver a iniciar el CMD;
+recargar la página. Además, **Subir el firmware nuevo** desde Arduino IDE para
+habilitar las fotos de avisos. Cambiar solo las pestañas no requiere subir firmware.
+
+## Reporte manual
 
 - Escribir entre 1 y 20 destinatarios separados por comas o saltos de línea.
 - Se valida en el servidor y se eliminan direcciones repetidas idénticas.
@@ -95,11 +173,12 @@ la nueva dirección. Las pruebas automatizadas usan MIME en memoria y SMTP simul
 SweetAlert2 dejan de formar parte del binario. La ruta `/rostros` de la cámara
 indica abrir el servidor local. El ejemplo original permanece en `/`.
 
-Compilación ESP32 2.0.17 correcta: **3 038 201 bytes (96%)**, globals **74 636 bytes
-(22%)**. Frente a 3 095 813 bytes se liberaron **57 612 bytes** de flash. No cambian
-particiones, resolución 240x240, pines ni datos del padrón. Para aplicar esta
-reducción hay que subir el firmware; Node.js también puede usar el firmware
-anterior que ya dispone de la API de eventos.
+Compilación ESP32 2.0.17 con captura de avisos (2026-11-07): **3 038 941 bytes
+(96%)**, globals **74 692 bytes (22%)**. La ampliación agrega 740 bytes de flash
+y 56 bytes globales respecto del firmware Node.js anterior; las fotos usan RAM
+dinámica adicional solo como último recorte. No cambian particiones, resolución
+240x240, pines ni datos del padrón. Requiere **Subir** para habilitar la captura
+de avisos; no se verificó en la placa durante esta implementación.
 
 Los cambios de la interfaz en modo Node.js solo necesitan recargar el navegador;
 no requieren compilar Arduino ni regenerar headers. Para volver a alojarla en el

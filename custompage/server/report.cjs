@@ -45,4 +45,22 @@ const buildReport = (payload, sender, now = new Date()) => {
     attachments:events.map((event,index)=>({filename:`evento-${index+1}.jpg`,content:event.content,contentType:'image/jpeg',cid:event.cid,contentDisposition:'inline'})),
     disableFileAccess:true,disableUrlAccess:true};
 };
-module.exports = {recipients,buildReport};
+/** Valida la captura del aviso y crea un único JPEG adjunto, también referenciado por CID en el cuerpo. No envía correo. */
+const buildAlert = (to,sender,capture,now=new Date()) => {
+  const {name,image,at}=capture;
+  const date=new Date(at);
+  if(typeof name!=='string'||!name.trim()||name.length>128||!Number.isFinite(date.getTime()))throw new Error('Captura de aviso invalida.');
+  if(typeof image!=='string'||image.length>350000||!/^[A-Za-z0-9+/]+={0,2}$/.test(image))throw new Error('Imagen de aviso invalida.');
+  const content=Buffer.from(image,'base64');
+  if(content.length<4||content[0]!==0xff||content[1]!==0xd8||content[content.length-2]!==0xff||content[content.length-1]!==0xd9)throw new Error('El aviso requiere una captura JPEG.');
+  const cid=`aviso-${randomUUID()}@camera.local`;
+  return {
+  from:{name:'Camara ESP32',address:sender},to:to.map(address=>({address})),
+  subject:`Aviso de rostro detectado <${peru.format(now)}>`,
+  text:`Se detecto un rostro.\nFecha y hora: ${peru.format(date)}\nResultado: ${name}\nLa captura se adjunta al correo.`,
+  html:`<!doctype html><html lang="es"><body><h2>Rostro detectado</h2><p>Fecha y hora: ${escapeHtml(peru.format(date))}</p><p>Resultado: ${escapeHtml(name)}</p><img src="cid:${cid}" width="200" alt="Captura que activo el aviso"></body></html>`,
+  attachments:[{filename:'captura-aviso.jpg',content,contentType:'image/jpeg',cid,contentDisposition:'attachment'}],
+  disableFileAccess:true,disableUrlAccess:true,
+  };
+};
+module.exports = {recipients,buildReport,buildAlert};

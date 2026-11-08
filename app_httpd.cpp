@@ -19,6 +19,7 @@
 #include "esp32-hal-ledc.h"
 #include "sdkconfig.h"
 #include "custompage/stock_index_assets.h"
+#include "custompage/pir_motion.h"
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(CONFIG_ARDUHAL_ESP_LOG)
 #include "esp32-hal-log.h"
@@ -267,7 +268,11 @@ static int run_face_recognition(fb_data_t *fb, std::list<dl::detect::result_t> *
 
     face_info_t recognize = recognizer.recognize(tensor, landmarks);
     custompage::lastId = recognize.id;
-    if (results->size() == 1) custompage::captureEvent(fb, results->front(), recognize.id);
+    if (results->size() == 1) {
+        // Ambas fotos usan este cuadro y este resultado, antes de dibujar nombres y recuadros.
+        custompage::captureNotice(fb, results->front(), recognize.id);
+        custompage::captureEvent(fb, results->front(), recognize.id);
+    }
     else custompage::eventCandidate = -2;
     if(recognize.id >= 0){
         String name = custompage::displayName(recognize.id);
@@ -534,6 +539,13 @@ static esp_err_t capture_handler(httpd_req_t *req)
 
 static esp_err_t stream_handler(httpd_req_t *req)
 {
+    char query[32] = {}, mode[4] = {};
+    const bool pirControlled = httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "pir", mode, sizeof(mode)) == ESP_OK && !strcmp(mode, "1");
+    if (pirControlled && !pir::snapshot().cameraAllowed) {
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_sendstr(req, "PIR: esperando movimiento o estabilizacion.");
+    }
     camera_fb_t *fb = NULL;
     struct timeval _timestamp;
     esp_err_t res = ESP_OK;
@@ -583,6 +595,12 @@ static esp_err_t stream_handler(httpd_req_t *req)
 
     while (true)
     {
+        // Se aplica también en la placa: cerrar captura/IA tras 60 s sin señal, aunque el navegador se ralentice.
+        if (pirControlled && !pir::snapshot().cameraAllowed) {
+            log_i("PIR: video detenido por inactividad.");
+            res = httpd_resp_send_chunk(req, nullptr, 0);
+            break;
+        }
 #if CONFIG_ESP_FACE_DETECT_ENABLED
     #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_INFO
         detected = false;

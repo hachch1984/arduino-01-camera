@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="/rostros/rostros.css">
   <script defer src="/rostros/sweetalert2.min.js"></script>
   <script defer src="/rostros/app.js"></script>
+  <script defer src="/rostros/tabs.js"></script>
+  <script defer src="/rostros/avisos.js"></script>
 </head>
 <body><main class="container py-4">
   <header class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
@@ -20,6 +22,9 @@
       <h2 class="h5">Cámara en vivo</h2>
       <div class="camera my-3"><span id="placeholder" class="muted p-4 text-center">Inicia el video para reconocer o registrar un rostro.</span><img id="video" alt="Video en vivo de la cámara" hidden></div>
       <button id="toggle" class="btn btn-info" disabled>Iniciar video</button>
+      <div class="form-check mt-3"><input id="usePir" type="checkbox" class="form-check-input" disabled><label for="usePir" class="form-check-label">Usar PIR para activar la cámara</label></div>
+      <p id="pirStatus" class="small muted mt-2 mb-0" role="status" aria-live="polite">Consultando sensor de movimiento…</p>
+      <p class="small muted mt-1 mb-0">En modo PIR, el video se detiene tras 60 segundos sin señal de movimiento. Mantén esta página abierta.</p>
       <p id="recognition" class="muted mt-3 mb-0" aria-live="polite">Video detenido</p>
     </div></div></section>
     <section class="col-lg-4"><div class="card h-100"><div class="card-body">
@@ -31,7 +36,36 @@
         <p id="recognizedNoPhoto" class="muted" hidden>Registro anterior sin foto.</p>
       </div>
     </div></div></section>
-    <section class="col-lg-6"><div class="card h-100"><div class="card-body d-flex flex-column">
+    <div class="col-12">
+    <nav class="nav nav-tabs mb-3" id="managementTabs" role="tablist" aria-label="Administración de la cámara">
+      <button class="nav-link active" id="padronTab" type="button" role="tab" aria-controls="padronSection" aria-selected="true">Padrón</button>
+      <button class="nav-link" id="eventsTab" type="button" role="tab" aria-controls="eventsSection" aria-selected="false" tabindex="-1">Eventos</button>
+      <button class="nav-link" id="noticeTab" type="button" role="tab" aria-controls="noticeSection" aria-selected="false" tabindex="-1">Aviso</button>
+    </nav>
+    <div class="tab-content">
+    <section id="noticeSection" class="tab-pane" role="tabpanel" aria-labelledby="noticeTab" tabindex="0" hidden><div class="card"><div class="card-body">
+      <h2 class="h5">Aviso</h2>
+      <div class="row g-4"><div class="col-md-8">
+      <div class="notice-fields">
+        <div class="form-check my-3"><input id="noticeEnabled" type="checkbox" class="form-check-input"><label for="noticeEnabled" class="form-check-label">Activar avisos por correo</label></div>
+        <p class="small muted">Envía un aviso al detectar un rostro, sea una persona empadronada o un intruso. Requiere mantener el video y esta página abiertos.</p>
+        <label for="noticeEmails" class="form-label">Enviar avisos a</label>
+        <textarea id="noticeEmails" class="form-control" rows="2" placeholder="equipo@ejemplo.com, supervisor@ejemplo.com" aria-describedby="noticeHelp" spellcheck="false"></textarea>
+        <p id="noticeHelp" class="small muted mt-2">Uno o varios correos separados por comas. Los cambios se aplican automáticamente.</p>
+        <p id="noticeCounter" class="text-info mb-2" role="timer" aria-live="off" hidden></p>
+        <p class="small muted mb-0">Después de cada envío, espera 5 segundos antes de permitir otro aviso.</p>
+        <p id="noticeError" class="text-warning small mt-2 mb-0" role="alert" hidden></p>
+      </div>
+      </div><div class="col-md-4">
+        <h3 class="h6">Captura del último aviso</h3>
+        <p id="noticeCaptureEmpty" class="small muted">La captura aparecerá cuando un rostro active un correo.</p>
+        <figure id="noticeCapture" class="mb-0" hidden>
+          <img id="noticePhoto" class="notice-photo" alt="Captura que activó el último aviso">
+          <figcaption class="small mt-2"><strong id="noticeCaptureName" class="d-block text-break"></strong><time id="noticeCaptureTime" class="muted d-block"></time><span id="noticeCaptureStatus" class="d-block mt-1" aria-live="polite"></span></figcaption>
+        </figure>
+      </div></div>
+    </div></div></section>
+    <section id="padronSection" class="tab-pane active show" role="tabpanel" aria-labelledby="padronTab" tabindex="0"><div class="card h-100"><div class="card-body d-flex flex-column">
       <h2 class="h5">Padrón</h2>
       <form id="enrollForm" class="mt-2"><label for="name" class="form-label">Nombre descriptivo</label>
         <input id="name" class="form-control mb-3" maxlength="40" placeholder="Por ejemplo: Henry" autocomplete="off" required>
@@ -48,13 +82,13 @@
         <div id="capacityProgress" class="progress" role="progressbar" aria-label="Cupos de rostros ocupados" aria-valuemin="0" aria-valuemax="7" aria-valuenow="0" aria-valuetext="Consultando cupos"><div id="capacityBar" class="progress-bar bg-info text-dark"></div></div>
       </div>
     </div></div></section>
-    <section class="col-lg-6"><div class="card h-100"><div class="card-body d-flex flex-column">
+    <section id="eventsSection" class="tab-pane" role="tabpanel" aria-labelledby="eventsTab" tabindex="0" hidden><div class="card h-100"><div class="card-body d-flex flex-column">
       <h2 class="h5">Eventos</h2>
       <div class="d-flex flex-wrap align-items-center gap-3 mt-2 mb-3">
         <div class="form-check mb-0"><input id="recordEvents" type="checkbox" class="form-check-input"><label class="form-check-label" for="recordEvents">Registrar eventos</label></div>
         <button id="clearEvents" type="button" class="btn btn-sm btn-outline-secondary" disabled>Limpiar</button>
       </div>
-      <p class="small muted">Hora de Perú · Espera de 3 segundos con un solo rostro y el mismo resultado de reconocimiento antes de capturar. Se conservan los últimos 50 eventos en esta pestaña; al recargar se borran.</p>
+      <p class="small muted">Hora de Perú · Espera de 3 segundos con un solo rostro y el mismo resultado de reconocimiento antes de capturar. Se conservan los últimos 50 eventos en esta sesión del navegador; al recargar se borran.</p>
       <p id="eventsEmpty" class="muted">Activa el registro e inicia el video para capturar eventos.</p>
       <div id="events" class="event-list mb-4" aria-label="Lista de eventos"></div>
       <div class="mt-auto pt-3 border-top">
@@ -64,6 +98,7 @@
         <button id="sendReport" type="button" class="btn btn-primary" disabled>Enviar reporte</button>
       </div>
     </div></div></section>
+    </div></div>
   </div>
-  <p class="small muted mt-4">Usa un solo video abierto a la vez. Si cambias de página, se detiene esta transmisión.</p>
+  <p class="small muted mt-4">Usa un solo video abierto a la vez. Cambiar entre Padrón, Eventos y Aviso mantiene la transmisión y las funciones activadas; salir de esta página detiene el video.</p>
 </main></body></html>

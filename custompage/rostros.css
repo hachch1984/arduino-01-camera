@@ -13,3 +13,8 @@ body { background: #101722; }
 .event-item { display: flex; align-items: center; gap: 1rem; padding: .75rem 0; border-bottom: 1px solid #303e50; }
 .event-item img { flex-shrink: 0; }
 .event-details { min-width: 0; overflow-wrap: anywhere; }
+.notice-fields { max-width: 680px; }
+.notice-photo { width: 100%; max-width: 220px; height: auto; border-radius: 12px; background: #253044; }
+#managementTabs .nav-link { color: #aebdce; }
+#managementTabs .nav-link.active { color: #fff; background: #182231; border-color: #303e50; }
+#noticeCounter { font-variant-numeric: tabular-nums; }

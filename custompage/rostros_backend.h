@@ -7,6 +7,7 @@
 #include "mbedtls/base64.h"
 #include "freertos/semphr.h"
 #include "web_config.h"
+#include "pir_motion.h"
 #if CUSTOMPAGE_EMBED_WEB_UI
 #include "rostros_assets.h"
 #endif
@@ -23,6 +24,10 @@ static uint32_t eventSequence = 0;
 static int64_t eventTime = 0, recordingUntil = 0;
 static int eventCandidate = -2;
 static int64_t candidateSince = 0, candidateSeen = 0;
+// Una solicitud de Node.js produce una sola captura de aviso; no se escribe en flash.
+static String noticeImage, noticeName;
+static uint32_t noticeRequest = 0, noticeTicket = 0;
+static int64_t noticeUntil = 0, noticeTime = 0;
 static int64_t deadline = 0, lastSeen = 0;
 static uint32_t revision = 0;
 static bool failed = false;
@@ -120,6 +125,25 @@ static bool portrait(fb_data_t *fb, const dl::detect::result_t &face, uint8_t **
     bool ok = fmt2jpg(crop, size, width, height, PIXFORMAT_RGB888, 80, jpg, length);
     free(crop); return ok;
 }
+// Codifica el recorte del cuadro clasificado. Solo se llama si se necesita una foto, no en cada frame.
+static bool encodedPortrait(fb_data_t *fb, const dl::detect::result_t &face, String &image) {
+    uint8_t *jpg = nullptr; size_t length = 0;
+    if (!portrait(fb, face, &jpg, &length)) { free(jpg); return false; }
+    size_t capacity = 4 * ((length + 2) / 3) + 1, written = 0;
+    unsigned char *encoded = (unsigned char *)malloc(capacity);
+    bool ok = encoded && mbedtls_base64_encode(encoded, capacity, &written, jpg, length) == 0;
+    if (ok) { encoded[written] = 0; image = (const char *)encoded; ok = image.length() == written; }
+    free(encoded); free(jpg); return ok;
+}
+// El mutex ya está adquirido. Captura inmediatamente el primer rostro único clasificado para este ticket.
+// La concesión caduca si desaparece la página; repetir el ticket solo consulta la misma foto.
+static void captureNotice(fb_data_t *fb, const dl::detect::result_t &face, int id) {
+    int64_t now = esp_timer_get_time();
+    if (!noticeRequest || noticeRequest == noticeTicket || now >= noticeUntil) return;
+    if (!encodedPortrait(fb, face, noticeImage)) return;
+    noticeName = id >= 0 ? displayName(id) : "Intruso";
+    noticeTime = now; noticeTicket = noticeRequest;
+}
 // Caller holds mutex. Capture the same unannotated face that was classified.
 // A short lease renewed by the page avoids JPEG work when no one records events.
 static void captureEvent(fb_data_t *fb, const dl::detect::result_t &face, int id) {
@@ -133,17 +157,10 @@ static void captureEvent(fb_data_t *fb, const dl::detect::result_t &face, int id
     candidateSeen = now;
     if (now - candidateSince < 3000000) return;
     candidateSince = now; // Also space repeated captures and failed attempts.
-    uint8_t *jpg = nullptr; size_t length = 0;
-    if (!portrait(fb, face, &jpg, &length)) { free(jpg); return; }
-    size_t capacity = 4 * ((length + 2) / 3) + 1, written = 0;
-    unsigned char *encoded = (unsigned char *)malloc(capacity);
-    if (encoded && mbedtls_base64_encode(encoded, capacity, &written, jpg, length) == 0) {
-        encoded[written] = 0;
-        eventImage = (const char *)encoded;
+    if (encodedPortrait(fb, face, eventImage)) {
         eventName = id >= 0 ? displayName(id) : "Intruso";
         eventTime = now; ++eventSequence;
     }
-    free(encoded); free(jpg);
 }
 static void enroll(fb_data_t *fb, std::list<dl::detect::result_t> *results, Tensor<uint8_t> &tensor) {
     expire();
@@ -217,7 +234,32 @@ static esp_err_t list(httpd_req_t *req) {
     cJSON_AddBoolToObject(body, "faceVisible", current);
     cJSON_AddNumberToObject(body, "lastId", current ? lastId : -1);
     cJSON_AddNumberToObject(body, "eventSequence", eventSequence);
-    char query[100] = {}, record[8] = {}, after[16] = {};
+    cJSON_AddBoolToObject(body, "noticeSupported", true);
+    const pir::Snapshot motion = pir::snapshot();
+    cJSON *sensor = cJSON_AddObjectToObject(body, "pir");
+    cJSON_AddNumberToObject(sensor, "gpio", pir::GPIO);
+    cJSON_AddBoolToObject(sensor, "ready", motion.ready);
+    cJSON_AddBoolToObject(sensor, "active", motion.active);
+    cJSON_AddBoolToObject(sensor, "cameraAllowed", motion.cameraAllowed);
+    cJSON_AddNumberToObject(sensor, "warmupMs", motion.warmupMs);
+    cJSON_AddNumberToObject(sensor, "remainingMs", motion.remainingMs);
+    cJSON_AddNumberToObject(sensor, "sequence", motion.sequence);
+    cJSON_AddNumberToObject(sensor, "boot", motion.boot);
+    char query[160] = {}, record[8] = {}, after[16] = {}, notify[16] = {};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "notify", notify, sizeof(notify)) == ESP_OK) {
+        char *end; unsigned long requested = strtoul(notify, &end, 10);
+        if (requested && end != notify && !*end) {
+            noticeRequest = requested; noticeUntil = esp_timer_get_time() + 6000000;
+            if (noticeTicket == noticeRequest && noticeImage.length() && esp_timer_get_time() - noticeTime < 6000000) {
+                cJSON *capture = cJSON_AddObjectToObject(body, "noticeCapture");
+                cJSON_AddNumberToObject(capture, "ticket", noticeTicket);
+                cJSON_AddNumberToObject(capture, "ageMs", (esp_timer_get_time() - noticeTime) / 1000);
+                cJSON_AddStringToObject(capture, "name", noticeName.c_str());
+                cJSON_AddStringToObject(capture, "image", noticeImage.c_str());
+            }
+        }
+    }
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
         httpd_query_key_value(query, "record", record, sizeof(record)) == ESP_OK && !strcmp(record, "1")) {
         recordingUntil = esp_timer_get_time() + 6000000;
@@ -302,6 +344,8 @@ static void routes(httpd_handle_t server) {
 #if CUSTOMPAGE_EMBED_WEB_UI
         {.uri="/rostros", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, rostros_html_gz, sizeof(rostros_html_gz), "text/html; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/app.js", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, rostros_js_gz, sizeof(rostros_js_gz), "application/javascript; charset=utf-8");}, .user_ctx=nullptr},
+        {.uri="/rostros/tabs.js", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, tabs_js_gz, sizeof(tabs_js_gz), "application/javascript; charset=utf-8");}, .user_ctx=nullptr},
+        {.uri="/rostros/avisos.js", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, avisos_js_gz, sizeof(avisos_js_gz), "application/javascript; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/rostros.css", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, rostros_css_gz, sizeof(rostros_css_gz), "text/css; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/bootstrap.min.css", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, bootstrap_css_gz, sizeof(bootstrap_css_gz), "text/css; charset=utf-8");}, .user_ctx=nullptr},
         {.uri="/rostros/sweetalert2.min.js", .method=HTTP_GET, .handler=[](httpd_req_t *r){return asset(r, sweetalert_js_gz, sizeof(sweetalert_js_gz), "application/javascript; charset=utf-8");}, .user_ctx=nullptr},

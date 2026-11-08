@@ -1,5 +1,6 @@
 #include "esp_camera.h"
 #include <WiFi.h>
+#include "custompage/pir_motion.h"
 
 //
 // WARNING!!! PSRAM IC required for UXGA resolution and high JPEG quality
@@ -45,6 +46,7 @@ void setup() {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
+  pir::begin();
 
   Serial.printf("Chip: %s, Flash: %u MB, PSRAM: %s (%.1f MB available)\n",
                 ESP.getChipModel(), ESP.getFlashChipSize() / (1024 * 1024),
@@ -155,6 +157,7 @@ void setup() {
 }
 
 void loop() {
-  // Do nothing. Everything is done in another task by the web server
-  delay(10000);
+  // Lectura ligera; el servidor sigue procesando video y reconocimiento en su propia tarea.
+  pir::update();
+  delay(100);
 }
